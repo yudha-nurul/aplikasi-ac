@@ -1,17 +1,49 @@
+import sqlite3
 from fastapi import FastAPI, Request, Form
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# Data sementara dengan status awal
-daftar_unit = [
-    {"nama_pelanggan": "Budi Santoso", "mode": "AC", "unit": "AC Ruang Tamu (1 PK)", "status": "Perlu Servis"},
-    {"nama_pelanggan": "Siti Rahma", "mode": "Kulkas", "unit": "Kulkas 2 Pintu Dapur", "status": "Selesai"}
-]
+DB_NAME = "aplikasi_ac.db"
 
+# 🛠️ Fungsi pembantu untuk koneksi ke Database SQLite
+def get_db_connection():
+    conn = sqlite3.connect(DB_NAME)
+    # conn.row_factory memungkingkan kita mengambil data dalam bentuk dictionary
+    conn.row_factory = sqlite3.Row
+    return conn
+
+# 🛠️ Inisialisasi Tabel SQLite saat aplikasi dijalankan
+def init_db():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS unit_servis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nama_pelanggan TEXT NOT NULL,
+            mode TEXT NOT NULL,
+            unit TEXT NOT NULL,
+            status TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+# Jalankan fungsi pembuat tabel
+init_db()
+
+# -------------------------------------------------------------
+# 🌐 ROUTE & ENDPOINTS APLIKASI
+# -------------------------------------------------------------
+
+# 1. Halaman Utama: Mengambil data dari SQLite
 @app.get("/")
 def halaman_utama(request: Request):
+    conn = get_db_connection()
+    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    conn.close()
+
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -21,6 +53,7 @@ def halaman_utama(request: Request):
         }
     )
 
+# 2. Tambah Data Baru ke Database SQLite
 @app.post("/tambah-unit")
 def tambah_unit(
     request: Request,
@@ -28,32 +61,43 @@ def tambah_unit(
     mode: str = Form(...),
     nama_unit: str = Form(...)
 ):
-    unit_baru = {
-        "nama_pelanggan": nama_pelanggan,
-        "mode": mode,
-        "unit": nama_unit,
-        "status": "Baru Terdaftar"
-    }
-    daftar_unit.insert(0, unit_baru)
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?)",
+        (nama_pelanggan, mode, nama_unit, "Baru Terdaftar")
+    )
+    conn.commit()
     
+    # Ambil ulang daftar unit terbaru dari DB
+    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    conn.close()
+
     return templates.TemplateResponse(
         request=request,
         name="partials/daftar_unit.html",
         context={"daftar_unit": daftar_unit}
     )
 
-# 🔄 Endpoint 1: Ubah Status Unit
-@app.post("/ubah-status/{index}")
-def ubah_status(request: Request, index: int):
-    if 0 <= index < len(daftar_unit):
-        # Siklus perubahan status: Baru Terdaftar -> Dalam Proses -> Selesai -> Perlu Servis
-        status_sekarang = daftar_unit[index]["status"]
+# 3. Ubah Status Unit Berdasarkan ID Unik di Database
+@app.post("/ubah-status/{unit_id}")
+def ubah_status(request: Request, unit_id: int):
+    conn = get_db_connection()
+    unit = conn.execute("SELECT status FROM unit_servis WHERE id = ?", (unit_id,)).fetchone()
+    
+    if unit:
+        status_sekarang = unit["status"]
         if status_sekarang == "Baru Terdaftar" or status_sekarang == "Perlu Servis":
-            daftar_unit[index]["status"] = "Dalam Proses"
+            status_baru = "Dalam Proses"
         elif status_sekarang == "Dalam Proses":
-            daftar_unit[index]["status"] = "Selesai"
+            status_baru = "Selesai"
         else:
-            daftar_unit[index]["status"] = "Perlu Servis"
+            status_baru = "Perlu Servis"
+
+        conn.execute("UPDATE unit_servis SET status = ? WHERE id = ?", (status_baru, unit_id))
+        conn.commit()
+
+    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    conn.close()
 
     return templates.TemplateResponse(
         request=request,
@@ -61,11 +105,15 @@ def ubah_status(request: Request, index: int):
         context={"daftar_unit": daftar_unit}
     )
 
-# ❌ Endpoint 2: Hapus Unit
-@app.post("/hapus-unit/{index}")
-def hapus_unit(request: Request, index: int):
-    if 0 <= index < len(daftar_unit):
-        daftar_unit.pop(index)
+# 4. Hapus Unit Berdasarkan ID Unik di Database
+@app.post("/hapus-unit/{unit_id}")
+def hapus_unit(request: Request, unit_id: int):
+    conn = get_db_connection()
+    conn.execute("DELETE FROM unit_servis WHERE id = ?", (unit_id,))
+    conn.commit()
+
+    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    conn.close()
 
     return templates.TemplateResponse(
         request=request,

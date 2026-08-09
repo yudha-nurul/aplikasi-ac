@@ -17,13 +17,13 @@
             {{ item.status }}
         </span>
 
-        <button hx-post="/ubah-status/{{ loop.index0 }}" 
+        <button hx-post="/ubah-status/{{ item.id }}" 
                 hx-target="#daftar-unit-container" 
                 class="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs rounded-lg font-medium transition">
             🔄 Ubah Status
         </button>
 
-        <button hx-post="/hapus-unit/{{ loop.index0 }}" 
+        <button hx-post="/hapus-unit/{{ item.id }}" 
                 hx-target="#daftar-unit-container"
                 hx-confirm="Yakin ingin menghapus unit ini?"
                 class="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg font-medium transition">
@@ -33,5 +33,5 @@
 
 </div>
 {% else %}
-<p class="text-sm text-slate-400 text-center py-4">Belum ada data unit terdaftar.</p>
+<p class="text-sm text-slate-400 text-center py-4">Belum ada data unit terdaftar di database.</p>
 {% endfor %}
