@@ -1,5 +1,9 @@
 import sqlite3
+import os
+import qrcode
+from io import BytesIO
 from fastapi import FastAPI, Request, Form
+from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
@@ -7,20 +11,19 @@ templates = Jinja2Templates(directory="templates")
 
 DB_NAME = "aplikasi_ac.db"
 
-# 🛠️ Fungsi pembantu untuk koneksi ke Database SQLite
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
-    # conn.row_factory memungkingkan kita mengambil data dalam bentuk dictionary
     conn.row_factory = sqlite3.Row
     return conn
 
-# 🛠️ Inisialisasi Tabel SQLite saat aplikasi dijalankan
+# 🛠️ Inisialisasi Database (Menambahkan kolom kode_unik)
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS unit_servis (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            kode_unik TEXT UNIQUE,
             nama_pelanggan TEXT NOT NULL,
             mode TEXT NOT NULL,
             unit TEXT NOT NULL,
@@ -30,14 +33,12 @@ def init_db():
     conn.commit()
     conn.close()
 
-# Jalankan fungsi pembuat tabel
 init_db()
 
 # -------------------------------------------------------------
-# 🌐 ROUTE & ENDPOINTS APLIKASI
+# 🌐 ENDPOINTS APLIKASI
 # -------------------------------------------------------------
 
-# 1. Halaman Utama: Mengambil data dari SQLite
 @app.get("/")
 def halaman_utama(request: Request):
     conn = get_db_connection()
@@ -53,7 +54,6 @@ def halaman_utama(request: Request):
         }
     )
 
-# 2. Tambah Data Baru ke Database SQLite
 @app.post("/tambah-unit")
 def tambah_unit(
     request: Request,
@@ -62,13 +62,23 @@ def tambah_unit(
     nama_unit: str = Form(...)
 ):
     conn = get_db_connection()
-    conn.execute(
+    
+    # 1. Simpan unit dulu untuk mendapatkan ID otomatis
+    cursor = conn.cursor()
+    cursor.execute(
         "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?)",
         (nama_pelanggan, mode, nama_unit, "Baru Terdaftar")
     )
+    unit_id = cursor.lastrowid
+    
+    # 2. Buat Kode Unik berdasarkan ID (Contoh: AC-001, KLK-002, dll)
+    prefix = mode[:3].upper() # AC -> AC, Kulkas -> KUL
+    kode_unik = f"{prefix}-{unit_id:03d}" # Contoh: AC-001
+    
+    # 3. Update kode_unik ke database
+    cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
     conn.commit()
     
-    # Ambil ulang daftar unit terbaru dari DB
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
     conn.close()
 
@@ -78,7 +88,19 @@ def tambah_unit(
         context={"daftar_unit": daftar_unit}
     )
 
-# 3. Ubah Status Unit Berdasarkan ID Unik di Database
+# 🏷️ ENDPOINT KHUSUS: Generate QR Code dalam bentuk Gambar (PNG)
+@app.get("/generate-qr/{kode_unik}")
+def generate_qr(kode_unik: str):
+    # Buat QR Code berisi teks kode_unik
+    img = qrcode.make(f"https://aplikasi-ac.com/unit/{kode_unik}")
+    
+    # Simpan ke memori sementara (RAM) lalu kirim sebagai gambar PNG
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    
+    return StreamingResponse(buf, media_type="image/png")
+
 @app.post("/ubah-status/{unit_id}")
 def ubah_status(request: Request, unit_id: int):
     conn = get_db_connection()
@@ -105,7 +127,6 @@ def ubah_status(request: Request, unit_id: int):
         context={"daftar_unit": daftar_unit}
     )
 
-# 4. Hapus Unit Berdasarkan ID Unik di Database
 @app.post("/hapus-unit/{unit_id}")
 def hapus_unit(request: Request, unit_id: int):
     conn = get_db_connection()
