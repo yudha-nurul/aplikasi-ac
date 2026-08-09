@@ -20,20 +20,27 @@
         </div>
 
         <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-            <h2 class="text-base font-bold text-slate-800 mb-4">➕ Tambah Unit Servis Baru</h2>
+            <h2 class="text-base font-bold text-slate-800 mb-4">➕ Tambah Unit Servis & Jadwal Remind</h2>
             
             <form hx-post="/tambah-unit" 
                   hx-target="#daftar-unit-container" 
                   hx-on::after-request="this.reset()"
                   class="space-y-4">
                 
-                <div>
-                    <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Nama Pelanggan</label>
-                    <input type="text" name="nama_pelanggan" required placeholder="Contoh: Pak Ahmad" 
-                           class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Nama Pelanggan</label>
+                        <input type="text" name="nama_pelanggan" required placeholder="Contoh: Pak Ahmad" 
+                               class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">No. WhatsApp</label>
+                        <input type="text" name="no_hp" required placeholder="Contoh: 081234567890" 
+                               class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Mode / Kategori</label>
                         <select name="mode" class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
@@ -45,20 +52,25 @@
                     </div>
                     <div>
                         <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Nama / Detail Unit</label>
-                        <input type="text" name="nama_unit" required placeholder="Contoh: AC Kamar Utama 1/2 PK" 
+                        <input type="text" name="nama_unit" required placeholder="Contoh: AC Kamar Utama" 
                                class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-600 uppercase mb-1">Tgl Servis Terakhir</label>
+                        <input type="date" name="tgl_servis" required 
+                               class="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm bg-white">
                     </div>
                 </div>
 
                 <button type="submit" 
                         class="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium py-2.5 rounded-xl transition shadow-md text-sm">
-                    Simpan Unit Baru (Tanpa Reload)
+                    Simpan Unit & Buat Remind Servis
                 </button>
             </form>
         </div>
 
         <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200">
-            <h2 class="text-base font-bold text-slate-800 mb-4">📋 Daftar Unit Terdaftar</h2>
+            <h2 class="text-base font-bold text-slate-800 mb-4">📋 Daftar Unit & Pengingat Servis</h2>
 
             <div id="daftar-unit-container" class="space-y-3">
                 {% include 'partials/daftar_unit.html' %}
@@ -69,4 +81,3 @@
 
 </body>
 </html>
-

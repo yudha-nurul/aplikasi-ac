@@ -1,6 +1,6 @@
 import sqlite3
-import os
 import qrcode
+from datetime import datetime, timedelta
 from io import BytesIO
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import StreamingResponse
@@ -16,7 +16,7 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-# 🛠️ Inisialisasi Database (Menambahkan kolom kode_unik)
+# 🛠️ Inisialisasi Database dengan kolom No HP & Tanggal
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -25,9 +25,12 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             kode_unik TEXT UNIQUE,
             nama_pelanggan TEXT NOT NULL,
+            no_hp TEXT,
             mode TEXT NOT NULL,
             unit TEXT NOT NULL,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            tgl_servis TEXT,
+            tgl_next_servis TEXT
         )
     """)
     conn.commit()
@@ -58,24 +61,36 @@ def halaman_utama(request: Request):
 def tambah_unit(
     request: Request,
     nama_pelanggan: str = Form(...),
+    no_hp: str = Form(...),
     mode: str = Form(...),
-    nama_unit: str = Form(...)
+    nama_unit: str = Form(...),
+    tgl_servis: str = Form(...) # Format YYYY-MM-DD dari HTML
 ):
+    # Hitung Jadwal Servis Berikutnya (Otomatis +90 hari / 3 Bulan)
+    tgl_obj = datetime.strptime(tgl_servis, "%Y-%m-%d")
+    tgl_next_obj = tgl_obj + timedelta(days=90)
+    tgl_next_servis = tgl_next_obj.strftime("%Y-%m-%d")
+
+    # Formatkan Nomor HP agar berawalan 62 untuk WhatsApp (misal 0812... -> 62812...)
+    no_hp_clean = no_hp.strip().replace("-", "").replace(" ", "")
+    if no_hp_clean.startswith("0"):
+        no_hp_clean = "62" + no_hp_clean[1:]
+
     conn = get_db_connection()
-    
-    # 1. Simpan unit dulu untuk mendapatkan ID otomatis
     cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?)",
-        (nama_pelanggan, mode, nama_unit, "Baru Terdaftar")
-    )
+    
+    # 1. Simpan data baru
+    cursor.execute("""
+        INSERT INTO unit_servis (nama_pelanggan, no_hp, mode, unit, status, tgl_servis, tgl_next_servis) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (nama_pelanggan, no_hp_clean, mode, nama_unit, "Baru Terdaftar", tgl_servis, tgl_next_servis))
+    
     unit_id = cursor.lastrowid
     
-    # 2. Buat Kode Unik berdasarkan ID (Contoh: AC-001, KLK-002, dll)
-    prefix = mode[:3].upper() # AC -> AC, Kulkas -> KUL
-    kode_unik = f"{prefix}-{unit_id:03d}" # Contoh: AC-001
+    # 2. Buat Kode Unik (misal: AC-001)
+    prefix = mode[:3].upper()
+    kode_unik = f"{prefix}-{unit_id:03d}"
     
-    # 3. Update kode_unik ke database
     cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
     conn.commit()
     
@@ -88,17 +103,12 @@ def tambah_unit(
         context={"daftar_unit": daftar_unit}
     )
 
-# 🏷️ ENDPOINT KHUSUS: Generate QR Code dalam bentuk Gambar (PNG)
 @app.get("/generate-qr/{kode_unik}")
 def generate_qr(kode_unik: str):
-    # Buat QR Code berisi teks kode_unik
     img = qrcode.make(f"https://aplikasi-ac.com/unit/{kode_unik}")
-    
-    # Simpan ke memori sementara (RAM) lalu kirim sebagai gambar PNG
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
-    
     return StreamingResponse(buf, media_type="image/png")
 
 @app.post("/ubah-status/{unit_id}")

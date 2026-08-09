@@ -1,42 +1,60 @@
 {% for item in daftar_unit %}
-<div class="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+<div class="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col space-y-3">
     
-    <div class="flex items-center gap-3">
-        {% if item.kode_unik %}
-        <div class="bg-white p-1 rounded-lg border border-slate-200 flex-shrink-0 text-center">
-            <img src="/generate-qr/{{ item.kode_unik }}" alt="QR Code" class="w-14 h-14 object-contain">
-            <span class="text-[9px] font-mono font-bold text-slate-600 block -mt-1">{{ item.kode_unik }}</span>
-        </div>
-        {% endif %}
-
-        <div>
-            <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 font-bold text-xs rounded-md">{{ item.mode }}</span>
-                <span class="font-bold text-slate-800 text-sm">{{ item.nama_pelanggan }}</span>
+    <div class="flex items-start justify-between gap-3">
+        <div class="flex items-center gap-3">
+            {% if item.kode_unik %}
+            <div class="bg-white p-1 rounded-lg border border-slate-200 flex-shrink-0 text-center">
+                <img src="/generate-qr/{{ item.kode_unik }}" alt="QR Code" class="w-12 h-12 object-contain">
+                <span class="text-[9px] font-mono font-bold text-slate-600 block -mt-1">{{ item.kode_unik }}</span>
             </div>
-            <p class="text-xs text-slate-600 font-medium mt-1">{{ item.unit }}</p>
-        </div>
-    </div>
+            {% endif %}
 
-    <div class="flex items-center gap-2 w-full md:w-auto justify-end">
+            <div>
+                <div class="flex items-center gap-2">
+                    <span class="px-2 py-0.5 bg-blue-100 text-blue-700 font-bold text-xs rounded-md">{{ item.mode }}</span>
+                    <span class="font-bold text-slate-800 text-sm">{{ item.nama_pelanggan }}</span>
+                </div>
+                <p class="text-xs text-slate-600 font-medium mt-0.5">{{ item.unit }}</p>
+            </div>
+        </div>
+
         <span class="text-xs font-semibold px-2.5 py-1 rounded-full 
             {% if item.status == 'Selesai' %} bg-green-100 text-green-700
             {% elif item.status == 'Dalam Proses' %} bg-blue-100 text-blue-700
             {% else %} bg-amber-100 text-amber-700 {% endif %}">
             {{ item.status }}
         </span>
+    </div>
 
+    <div class="flex flex-wrap items-center justify-between text-xs bg-white p-2.5 rounded-lg border border-slate-100 gap-2">
+        <div class="text-slate-500">
+            <span>Servis: <strong class="text-slate-700">{{ item.tgl_servis }}</strong></span>
+            <span class="mx-1.5">•</span>
+            <span>Jadwal Berikutnya: <strong class="text-blue-600 font-bold">{{ item.tgl_next_servis }}</strong></span>
+        </div>
+
+        {% if item.no_hp %}
+        <a href="https://wa.me/{{ item.no_hp }}?text=Halo%20Kak%20{{ item.nama_pelanggan }},%20sekadar%20mengingatkan%20bahwa%20unit%20{{ item.unit }}%20({{ item.kode_unik }})%20sudah%20waktunya%20servis%20berkala%20pada%20tanggal%20{{ item.tgl_next_servis }}.%20Apakah%20mau%20dijadwalkan%20kedatangan%20teknisi?" 
+           target="_blank" 
+           class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500 hover:bg-emerald-600 text-white font-medium rounded-lg text-xs transition shadow-sm">
+            💬 Kirim Remind WA
+        </a>
+        {% endif %}
+    </div>
+
+    <div class="flex items-center justify-end gap-2 pt-1">
         <button hx-post="/ubah-status/{{ item.id }}" 
                 hx-target="#daftar-unit-container" 
                 class="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs rounded-lg font-medium transition">
-            🔄
+            🔄 Ubah Status
         </button>
 
         <button hx-post="/hapus-unit/{{ item.id }}" 
                 hx-target="#daftar-unit-container"
                 hx-confirm="Yakin ingin menghapus unit ini?"
                 class="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg font-medium transition">
-            🗑️
+            🗑️ Hapus
         </button>
     </div>
 
