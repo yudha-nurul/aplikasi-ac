@@ -1,0 +1,42 @@
+# ── Cache Python ──────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+
+# ── Lingkungan Virtual ───────────────────
+venv-ac/
+.venv/
+env/
+.env/
+
+# ── File Rahasia / Konfigurasi Lokal ─────
+.env
+.env.local
+*.env
+
+# ── Hasil Kompilasi / Build (PyInstaller) ─
+build/
+dist/
+*.spec
+*.manifest
+*.exe
+
+# ── Log & Cache ───────────────────────────
+*.log
+pip-log.txt
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# ── Folder IDE (VS Code dll) ─────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ── File Sistem Operasi ──────────────────
+.DS_Store
+Thumbs.db

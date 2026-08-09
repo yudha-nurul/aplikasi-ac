@@ -1,0 +1,37 @@
+{% for item in daftar_unit %}
+<div class="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col md:flex-row md:items-center justify-between gap-3">
+    
+    <div>
+        <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 bg-blue-100 text-blue-700 font-bold text-xs rounded-md">{{ item.mode }}</span>
+            <span class="font-bold text-slate-800 text-sm">{{ item.nama_pelanggan }}</span>
+        </div>
+        <p class="text-xs text-slate-500 mt-1">{{ item.unit }}</p>
+    </div>
+
+    <div class="flex items-center gap-2">
+        <span class="text-xs font-semibold px-2.5 py-1 rounded-full 
+            {% if item.status == 'Selesai' %} bg-green-100 text-green-700
+            {% elif item.status == 'Dalam Proses' %} bg-blue-100 text-blue-700
+            {% else %} bg-amber-100 text-amber-700 {% endif %}">
+            {{ item.status }}
+        </span>
+
+        <button hx-post="/ubah-status/{{ loop.index0 }}" 
+                hx-target="#daftar-unit-container" 
+                class="px-2.5 py-1 bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 text-xs rounded-lg font-medium transition">
+            🔄 Ubah Status
+        </button>
+
+        <button hx-post="/hapus-unit/{{ loop.index0 }}" 
+                hx-target="#daftar-unit-container"
+                hx-confirm="Yakin ingin menghapus unit ini?"
+                class="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-600 text-xs rounded-lg font-medium transition">
+            🗑️ Hapus
+        </button>
+    </div>
+
+</div>
+{% else %}
+<p class="text-sm text-slate-400 text-center py-4">Belum ada data unit terdaftar.</p>
+{% endfor %}
