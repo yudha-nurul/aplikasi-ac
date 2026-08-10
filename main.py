@@ -1,4 +1,7 @@
+import os
 import sqlite3
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import qrcode
 from datetime import datetime, timedelta
 from io import BytesIO
@@ -9,65 +12,90 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
-# Mount folder static
+# Mount folder static & PWA
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Endpoint khusus Service Worker PWA
+templates = Jinja2Templates(directory="templates")
+
+# 🔒 Credential Login Teknisi
+ADMIN_USERNAME = "teknisi"
+ADMIN_PASSWORD = "ac123password"
+
+# 🗄️ DATABASE CONFIGURATION (Neon.tech PostgreSQL / SQLite Fallback)
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+def get_db_connection():
+    if DATABASE_URL:
+        # Jika DATABASE_URL ada (Vercel / Neon.tech)
+        # Penanganan khusus jika URL diawali postgres:// menjadi postgresql://
+        db_url = DATABASE_URL.replace("postgres://", "postgresql://")
+        conn = psycopg2.connect(db_url, cursor_factory=RealDictCursor)
+        return conn
+    else:
+        # Jika dijalankan secara lokal (SQLite)
+        conn = sqlite3.connect("aplikasi_ac.db")
+        conn.row_factory = sqlite3.Row
+        return conn
+
+def init_db():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        if DATABASE_URL:
+            # Query khusus PostgreSQL (Neon.tech)
+            query = """
+                CREATE TABLE IF NOT EXISTS unit_servis (
+                    id SERIAL PRIMARY KEY,
+                    kode_unik VARCHAR(50) UNIQUE,
+                    nama_pelanggan VARCHAR(100) NOT NULL,
+                    no_hp VARCHAR(20),
+                    mode VARCHAR(50) NOT NULL,
+                    unit VARCHAR(100) NOT NULL,
+                    status VARCHAR(50) NOT NULL,
+                    tgl_servis VARCHAR(20),
+                    tgl_next_servis VARCHAR(20)
+                );
+            """
+        else:
+            # Query khusus SQLite lokal
+            query = """
+                CREATE TABLE IF NOT EXISTS unit_servis (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kode_unik VARCHAR(50) UNIQUE,
+                    nama_pelanggan VARCHAR(100) NOT NULL,
+                    no_hp VARCHAR(20),
+                    mode VARCHAR(50) NOT NULL,
+                    unit VARCHAR(100) NOT NULL,
+                    status VARCHAR(50) NOT NULL,
+                    tgl_servis VARCHAR(20),
+                    tgl_next_servis VARCHAR(20)
+                );
+            """
+            
+        cursor.execute(query)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Error Database Init: {e}")
+
+# Jalankan inisialisasi tabel otomatis saat aplikasi berjalan
+init_db()
+
+# --- SERVICE WORKER PWA ---
 @app.get("/sw.js")
 def service_worker():
     return FileResponse("static/sw.js", media_type="application/javascript")
 
-DB_NAME = "aplikasi_ac.db"
-
-# 🔒 Credential Login Teknisi (Bisa diubah sesuai keinginan)
-ADMIN_USERNAME = "teknisi"
-ADMIN_PASSWORD = "ac123password"
-
-# -------------------------------------------------------------
-# 🗄️ KONEKSI & INISIALISASI DATABASE
-# -------------------------------------------------------------
-def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def init_db():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS unit_servis (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kode_unik TEXT UNIQUE,
-            nama_pelanggan TEXT NOT NULL,
-            no_hp TEXT,
-            mode TEXT NOT NULL,
-            unit TEXT NOT NULL,
-            status TEXT NOT NULL,
-            tgl_servis TEXT,
-            tgl_next_servis TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
-
-# -------------------------------------------------------------
-# 🔑 HELPER / CEK KUKI LOGIN
-# -------------------------------------------------------------
+# --- HELPER CEK LOGIN ---
 def cek_login_teknisi(request: Request) -> bool:
-    """Mengecek apakah user memiliki cookie session 'session_user' yang sah"""
     user_session = request.cookies.get("session_user")
     return user_session == ADMIN_USERNAME
 
-# -------------------------------------------------------------
-# 🔐 ENDPOINTS LOGIN & LOGOUT
-# -------------------------------------------------------------
+# --- ROUTE LOGIN & LOGOUT ---
 @app.get("/login", response_class=HTMLResponse)
 def halaman_login(request: Request):
-    # Jika sudah login, langsung lempar ke Dashboard utama
     if cek_login_teknisi(request):
         return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
     return templates.TemplateResponse(request=request, name="login.html")
@@ -75,12 +103,10 @@ def halaman_login(request: Request):
 @app.post("/login")
 def proses_login(request: Request, username: str = Form(...), password: str = Form(...)):
     if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-        # Jika cocok, buat kuki session & redirect ke Dashboard
         response = RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
         response.set_cookie(key="session_user", value=username, httponly=True)
         return response
     else:
-        # Jika gagal, kembalikan ke login.html dengan pesan error
         return templates.TemplateResponse(
             request=request,
             name="login.html",
@@ -89,23 +115,21 @@ def proses_login(request: Request, username: str = Form(...), password: str = Fo
 
 @app.get("/logout")
 def proses_logout():
-    # Hapus cookie session lalu redirect ke login
     response = RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie("session_user")
     return response
 
-# -------------------------------------------------------------
-# 🌐 ENDPOINTS DASHBOARD TEKNISI (TERPROTEKSI)
-# -------------------------------------------------------------
-
+# --- DASHBOARD TEKNISI ---
 @app.get("/")
 def halaman_utama(request: Request):
-    # 🛡️ Proteksi: Jika belum login, tendang ke /login
     if not cek_login_teknisi(request):
         return RedirectResponse(url="/login", status_code=status.HTTP_303_SEE_OTHER)
 
+    init_db() # Memastikan tabel sudah terbuat
     conn = get_db_connection()
-    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM unit_servis ORDER BY id DESC")
+    daftar_unit = cursor.fetchall()
     conn.close()
 
     return templates.TemplateResponse(
@@ -126,9 +150,8 @@ def tambah_unit(
     nama_unit: str = Form(...),
     tgl_servis: str = Form(...)
 ):
-    # 🛡️ Proteksi Aksi
     if not cek_login_teknisi(request):
-        raise HTTPException(status_code=401, detail="Akses ditolak. Silakan login terlebih dahulu.")
+        raise HTTPException(status_code=401, detail="Akses ditolak.")
 
     tgl_obj = datetime.strptime(tgl_servis, "%Y-%m-%d")
     tgl_next_obj = tgl_obj + timedelta(days=90)
@@ -141,20 +164,34 @@ def tambah_unit(
     conn = get_db_connection()
     cursor = conn.cursor()
     
-    cursor.execute("""
-        INSERT INTO unit_servis (nama_pelanggan, no_hp, mode, unit, status, tgl_servis, tgl_next_servis) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (nama_pelanggan, no_hp_clean, mode, nama_unit, "Baru Terdaftar", tgl_servis, tgl_next_servis))
-    
-    unit_id = cursor.lastrowid
-    
-    prefix = mode[:3].upper()
-    kode_unik = f"{prefix}-{unit_id:03d}"
-    
-    cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
+    if DATABASE_URL:
+        # PostgreSQL syntax (Neon.tech)
+        cursor.execute("""
+            INSERT INTO unit_servis (nama_pelanggan, no_hp, mode, unit, status, tgl_servis, tgl_next_servis) 
+            VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id
+        """, (nama_pelanggan, no_hp_clean, mode, nama_unit, "Baru Terdaftar", tgl_servis, tgl_next_servis))
+        row = cursor.fetchone()
+        unit_id = row['id'] if isinstance(row, dict) else row[0]
+        
+        prefix = mode[:3].upper()
+        kode_unik = f"{prefix}-{unit_id:03d}"
+        cursor.execute("UPDATE unit_servis SET kode_unik = %s WHERE id = %s", (kode_unik, unit_id))
+    else:
+        # SQLite syntax
+        cursor.execute("""
+            INSERT INTO unit_servis (nama_pelanggan, no_hp, mode, unit, status, tgl_servis, tgl_next_servis) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (nama_pelanggan, no_hp_clean, mode, nama_unit, "Baru Terdaftar", tgl_servis, tgl_next_servis))
+        unit_id = cursor.lastrowid
+        
+        prefix = mode[:3].upper()
+        kode_unik = f"{prefix}-{unit_id:03d}"
+        cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
+        
     conn.commit()
     
-    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    cursor.execute("SELECT * FROM unit_servis ORDER BY id DESC")
+    daftar_unit = cursor.fetchall()
     conn.close()
 
     return templates.TemplateResponse(
@@ -165,26 +202,37 @@ def tambah_unit(
 
 @app.post("/ubah-status/{unit_id}")
 def ubah_status(request: Request, unit_id: int):
-    # 🛡️ Proteksi Aksi
     if not cek_login_teknisi(request):
         raise HTTPException(status_code=401, detail="Akses ditolak")
 
     conn = get_db_connection()
-    unit = conn.execute("SELECT status FROM unit_servis WHERE id = ?", (unit_id,)).fetchone()
+    cursor = conn.cursor()
+    
+    if DATABASE_URL:
+        cursor.execute("SELECT status FROM unit_servis WHERE id = %s", (unit_id,))
+    else:
+        cursor.execute("SELECT status FROM unit_servis WHERE id = ?", (unit_id,))
+        
+    unit = cursor.fetchone()
     
     if unit:
-        status_sekarang = unit["status"]
-        if status_sekarang == "Baru Terdaftar" or status_sekarang == "Perlu Servis":
+        status_sekarang = unit["status"] if isinstance(unit, dict) else unit[0]
+        if status_sekarang in ["Baru Terdaftar", "Perlu Servis"]:
             status_baru = "Dalam Proses"
         elif status_sekarang == "Dalam Proses":
             status_baru = "Selesai"
         else:
             status_baru = "Perlu Servis"
 
-        conn.execute("UPDATE unit_servis SET status = ? WHERE id = ?", (status_baru, unit_id))
+        if DATABASE_URL:
+            cursor.execute("UPDATE unit_servis SET status = %s WHERE id = %s", (status_baru, unit_id))
+        else:
+            cursor.execute("UPDATE unit_servis SET status = ? WHERE id = ?", (status_baru, unit_id))
+            
         conn.commit()
 
-    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    cursor.execute("SELECT * FROM unit_servis ORDER BY id DESC")
+    daftar_unit = cursor.fetchall()
     conn.close()
 
     return templates.TemplateResponse(
@@ -195,15 +243,21 @@ def ubah_status(request: Request, unit_id: int):
 
 @app.post("/hapus-unit/{unit_id}")
 def hapus_unit(request: Request, unit_id: int):
-    # 🛡️ Proteksi Aksi
     if not cek_login_teknisi(request):
         raise HTTPException(status_code=401, detail="Akses ditolak")
 
     conn = get_db_connection()
-    conn.execute("DELETE FROM unit_servis WHERE id = ?", (unit_id,))
+    cursor = conn.cursor()
+    
+    if DATABASE_URL:
+        cursor.execute("DELETE FROM unit_servis WHERE id = %s", (unit_id,))
+    else:
+        cursor.execute("DELETE FROM unit_servis WHERE id = ?", (unit_id,))
+        
     conn.commit()
 
-    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    cursor.execute("SELECT * FROM unit_servis ORDER BY id DESC")
+    daftar_unit = cursor.fetchall()
     conn.close()
 
     return templates.TemplateResponse(
@@ -212,9 +266,7 @@ def hapus_unit(request: Request, unit_id: int):
         context={"daftar_unit": daftar_unit}
     )
 
-# -------------------------------------------------------------
-# 📱 HALAMAN PUBLIK / PELANGGAN & QR CODE (BEBAS AKSES)
-# -------------------------------------------------------------
+# --- HALAMAN PUBLIK & QR CODE ---
 @app.get("/generate-qr/{kode_unik}")
 def generate_qr(request: Request, kode_unik: str):
     base_url = str(request.base_url).rstrip('/')
@@ -229,13 +281,20 @@ def generate_qr(request: Request, kode_unik: str):
 @app.get("/unit/{kode_unik}")
 def detail_unit_publik(request: Request, kode_unik: str):
     conn = get_db_connection()
-    unit = conn.execute("SELECT * FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
+    cursor = conn.cursor()
+    
+    if DATABASE_URL:
+        cursor.execute("SELECT * FROM unit_servis WHERE kode_unik = %s", (kode_unik,))
+    else:
+        cursor.execute("SELECT * FROM unit_servis WHERE kode_unik = ?", (kode_unik,))
+        
+    unit = cursor.fetchone()
     conn.close()
 
     if not unit:
         raise HTTPException(status_code=404, detail="Unit tidak ditemukan")
 
-    no_wa_teknisi = "6281234567890"  # Nomor WA Teknisi untuk booking
+    no_wa_teknisi = "6281234567890"
 
     return templates.TemplateResponse(
         request=request,
