@@ -1,11 +1,24 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-xl font-bold text-slate-800">🛠️ Dashboard Teknisi</h1>
+        <a href="/logout" class="text-xs bg-red-100 hover:bg-red-200 text-red-600 px-3 py-1.5 rounded-lg font-semibold transition-all">
+        🚪 Logout
+        </a>
+    </div>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Aplikasi Servis AC</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#2563eb">
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js');
+        }
+    </script>
 </head>
 <body class="bg-slate-100 min-h-screen p-4 md:p-8">
 
