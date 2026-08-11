@@ -4,3 +4,4 @@ jinja2
 python-multipart
 qrcode
 psycopg2-binary
+pillow
