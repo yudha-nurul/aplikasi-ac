@@ -5,7 +5,10 @@
         <div class="flex items-center gap-3">
             {% if item.kode_unik %}
             <div class="bg-white p-1 rounded-lg border border-slate-200 flex-shrink-0 text-center">
-                <img src="/generate-qr/{{ item.kode_unik }}" alt="QR Code" class="w-12 h-12 object-contain">
+                <img 
+                src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=https://{{ request.headers.get('host') }}/unit/{{ unit.kode_unik }}" 
+                alt="QR Code {{ item.kode_unik }}" 
+                class="w-24 h-24 mx-auto rounded-lg border shadow-sm"/>
                 <span class="text-[9px] font-mono font-bold text-slate-600 block -mt-1">{{ item.kode_unik }}</span>
             </div>
             {% endif %}
