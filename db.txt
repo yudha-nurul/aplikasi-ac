@@ -1,0 +1,26 @@
+ac123omar!p
+
+teknisi
+ac123password
+
+
+dari neon.tech
+postgresql://neondb_owner:npg_xiw3tDTe0ozE@ep-steep-breeze-az6ktbal.c-3.ap-southeast-1.aws.neon.tech/neondb?sslmode=require
+
+
+https://github.com/yudha-nurul/aplikasi-ac
+
+token :
+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
+
+vercel autentifikasi app
+46WPTQCBS7DB3WMYLZ6SS5O23GELZWOM
+
+domain login ac online di vercel:
+https://aplikasi-ac.vercel.app/login
+
+
+push ke github :
+git add main.py
+git commit -m "update koneksi database neon postgresql"
+git push origin main
