@@ -15,6 +15,7 @@ env/
 .env
 .env.local
 *.env
+db.txt
 
 # ── Hasil Kompilasi / Build (PyInstaller) ─
 build/
@@ -40,3 +41,5 @@ htmlcov/
 # ── File Sistem Operasi ──────────────────
 .DS_Store
 Thumbs.db
+db.txt
+
