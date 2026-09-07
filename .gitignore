@@ -15,7 +15,10 @@ env/
 .env
 .env.local
 *.env
+!.env.example
 db.txt
+aplikasi_ac.db
+uploads/
 
 # ── Hasil Kompilasi / Build (PyInstaller) ─
 build/

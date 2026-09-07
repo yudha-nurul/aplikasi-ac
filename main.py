@@ -1,20 +1,76 @@
 import sqlite3
 import os
+import base64
+import hashlib
+import hmac
 import qrcode
+import shutil
+from urllib.parse import quote
+from datetime import date, datetime
 from io import BytesIO
-from fastapi import FastAPI, Request, Form
-from fastapi.responses import StreamingResponse
+from typing import List, Optional
+from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 DB_NAME = "aplikasi_ac.db"
+
+def load_local_env():
+    env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if not os.path.isfile(env_path):
+        return
+
+    with open(env_path, encoding="utf-8") as env_file:
+        for line in env_file:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+load_local_env()
+SESSION_SECRET = os.getenv("SESSION_SECRET", "ganti-secret-aplikasi-ac")
+TECHNICIAN_USERNAME = os.getenv("TECHNICIAN_USERNAME", "teknisi")
+TECHNICIAN_PASSWORD = os.getenv("TECHNICIAN_PASSWORD")
 
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
+
+def create_session(role: str) -> str:
+    payload = base64.urlsafe_b64encode(role.encode()).decode().rstrip("=")
+    signature = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{signature}"
+
+def get_session_role(request: Request):
+    session = request.cookies.get("ac_session", "")
+    try:
+        payload, signature = session.split(".", 1)
+        expected = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(signature, expected):
+            return None
+        return base64.urlsafe_b64decode(payload + "==").decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
+
+def hash_customer_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+def get_dashboard_url(request: Request) -> str:
+    role = get_session_role(request)
+    if role == "teknisi":
+        return "/dashboard"
+    if role == "customer":
+        return "/dashboard/customer"
+    return "/"
 
 # 🛠️ Inisialisasi Database (Menambahkan kolom kode_unik)
 def init_db():
@@ -30,29 +86,330 @@ def init_db():
             status TEXT NOT NULL
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pelanggan (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nama TEXT NOT NULL COLLATE NOCASE UNIQUE,
+            username TEXT,
+            password_hash TEXT
+            ,alamat TEXT
+        )
+    """)
+    customer_columns = {row[1] for row in cursor.execute("PRAGMA table_info(pelanggan)").fetchall()}
+    if "username" not in customer_columns:
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN username TEXT")
+    if "password_hash" not in customer_columns:
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN password_hash TEXT")
+    if "alamat" not in customer_columns:
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN alamat TEXT")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS profil_teknisi (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE,
+            no_hp TEXT
+        )
+    """)
+    cursor.execute(
+        "INSERT OR IGNORE INTO profil_teknisi (username) VALUES (?)",
+        (TECHNICIAN_USERNAME,),
+    )
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS history_servis (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            unit_id INTEGER NOT NULL,
+            tanggal TEXT NOT NULL,
+            item_servis TEXT NOT NULL,
+            kondisi_before TEXT NOT NULL,
+            kondisi_after TEXT NOT NULL,
+            nama_teknisi TEXT NOT NULL,
+            servis_selanjutnya TEXT NOT NULL,
+            foto_before TEXT,
+            foto_after TEXT,
+            FOREIGN KEY (unit_id) REFERENCES unit_servis(id)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS history_foto (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            history_id INTEGER NOT NULL,
+            jenis TEXT NOT NULL CHECK (jenis IN ('before', 'after')),
+            nama_file TEXT NOT NULL,
+            FOREIGN KEY (history_id) REFERENCES history_servis(id)
+        )
+    """)
+    history_columns = {row[1] for row in cursor.execute("PRAGMA table_info(history_servis)").fetchall()}
+    if "foto_before" not in history_columns:
+        cursor.execute("ALTER TABLE history_servis ADD COLUMN foto_before TEXT")
+    if "foto_after" not in history_columns:
+        cursor.execute("ALTER TABLE history_servis ADD COLUMN foto_after TEXT")
+    cursor.execute(
+        "INSERT OR IGNORE INTO pelanggan (nama) SELECT DISTINCT nama_pelanggan FROM unit_servis"
+    )
+    cursor.execute("UPDATE pelanggan SET username = nama WHERE username IS NULL OR username = ''")
+    cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pelanggan_username ON pelanggan(username)")
     conn.commit()
     conn.close()
 
 init_db()
+
+def simpan_foto(upload: Optional[UploadFile], prefix: str) -> Optional[str]:
+    if not upload or not upload.filename:
+        return None
+    extension = os.path.splitext(upload.filename)[1].lower()
+    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+        return None
+    filename = f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}{extension}"
+    with open(os.path.join(UPLOAD_DIR, filename), "wb") as output:
+        shutil.copyfileobj(upload.file, output)
+    return filename
+
+def simpan_banyak_foto(uploads: Optional[List[UploadFile]], prefix: str) -> List[str]:
+    filenames = []
+    for index, upload in enumerate(uploads or [], start=1):
+        filename = simpan_foto(upload, f"{prefix}-{index}")
+        if filename:
+            filenames.append(filename)
+    return filenames
+
+def reminder_text(next_date: Optional[str]) -> Optional[str]:
+    if not next_date:
+        return None
+    try:
+        days_left = (date.fromisoformat(next_date) - date.today()).days
+    except ValueError:
+        return None
+    if days_left == 3:
+        return "Pengingat: jadwal servis perangkat ini tinggal 3 hari lagi."
+    if days_left == 0:
+        return "Pengingat: jadwal servis perangkat ini adalah hari ini."
+    if days_left < 0:
+        return f"Jadwal servis berikutnya sudah lewat {abs(days_left)} hari."
+    return None
+
+def normalize_phone(phone: Optional[str]) -> str:
+    digits = "".join(character for character in (phone or "") if character.isdigit())
+    if digits.startswith("0"):
+        return "62" + digits[1:]
+    return digits
 
 # -------------------------------------------------------------
 # 🌐 ENDPOINTS APLIKASI
 # -------------------------------------------------------------
 
 @app.get("/")
-def halaman_utama(request: Request):
-    conn = get_db_connection()
-    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
-    conn.close()
-
+def halaman_awal(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
+        context={"nama_aplikasi": "Sistem Manajemen Servis AC"}
+    )
+
+@app.get("/dashboard")
+def halaman_dashboard(request: Request):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    teknisi = conn.execute(
+        "SELECT * FROM profil_teknisi WHERE username = ?",
+        (TECHNICIAN_USERNAME,),
+    ).fetchone()
+    daftar_pelanggan = conn.execute("SELECT * FROM pelanggan ORDER BY nama COLLATE NOCASE").fetchall()
+    daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
+    conn.close()
+
+    unit_per_pelanggan = {}
+    for unit in daftar_unit:
+        unit_per_pelanggan.setdefault(unit["nama_pelanggan"], []).append(unit)
+
+    pelanggan = [
+        {"nama": item["nama"], "units": unit_per_pelanggan.get(item["nama"], [])}
+        for item in daftar_pelanggan
+    ]
+
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard.html",
         context={
             "nama_aplikasi": "Sistem Manajemen Servis AC",
-            "daftar_unit": daftar_unit
+            "pelanggan": pelanggan,
+            "jumlah_pelanggan": len(pelanggan),
+            "teknisi": teknisi,
         }
     )
+
+@app.post("/profil-teknisi")
+def simpan_profil_teknisi(request: Request, no_hp: str = Form("")):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE profil_teknisi SET no_hp = ? WHERE username = ?",
+        (no_hp.strip(), TECHNICIAN_USERNAME),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/dashboard", status_code=303)
+
+@app.get("/dashboard/customer")
+def halaman_dashboard_customer(request: Request):
+    if get_session_role(request) != "customer":
+        return RedirectResponse("/login/customer", status_code=303)
+
+    customer_username = request.cookies.get("customer_username", "")
+    conn = get_db_connection()
+    customer = conn.execute(
+        "SELECT nama FROM pelanggan WHERE username = ?",
+        (customer_username,),
+    ).fetchone()
+    nama_pelanggan = customer["nama"] if customer else ""
+    daftar_unit = conn.execute(
+        "SELECT * FROM unit_servis WHERE lower(nama_pelanggan) = lower(?) ORDER BY id DESC",
+        (nama_pelanggan,),
+    ).fetchall()
+    conn.close()
+    return templates.TemplateResponse(
+        request=request,
+        name="dashboard_customer.html",
+        context={"nama_pelanggan": nama_pelanggan, "daftar_unit": daftar_unit},
+    )
+
+@app.get("/tambah-pelanggan")
+def halaman_tambah_pelanggan(request: Request):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+    return templates.TemplateResponse(request=request, name="tambah_pelanggan.html")
+
+@app.post("/tambah-pelanggan")
+def tambah_pelanggan(
+    request: Request,
+    nama: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    alamat: str = Form(""),
+):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    nama = nama.strip()
+    if nama:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT OR IGNORE INTO pelanggan (nama, username, password_hash) VALUES (?, ?, ?)",
+            (nama, username.strip(), hash_customer_password(password)),
+        )
+        conn.execute("UPDATE pelanggan SET alamat = ? WHERE nama = ?", (alamat.strip(), nama))
+        conn.commit()
+        conn.close()
+    return RedirectResponse("/dashboard", status_code=303)
+
+@app.get("/pelanggan/{nama_pelanggan}/edit")
+def halaman_edit_pelanggan(request: Request, nama_pelanggan: str):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    pelanggan = conn.execute(
+        "SELECT * FROM pelanggan WHERE lower(nama) = lower(?)",
+        (nama_pelanggan,),
+    ).fetchone()
+    conn.close()
+    if not pelanggan:
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Pelanggan Tidak Ditemukan", "pesan": "Data pelanggan tidak terdaftar.", "dashboard_url": "/dashboard"},
+            status_code=404,
+        )
+    return templates.TemplateResponse(request=request, name="edit_pelanggan.html", context={"pelanggan": pelanggan})
+
+@app.post("/pelanggan/{nama_pelanggan}/edit")
+def edit_pelanggan(
+    request: Request,
+    nama_pelanggan: str,
+    nama: str = Form(...),
+    username: str = Form(...),
+    password: str = Form(""),
+    alamat: str = Form(""),
+):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    nama = nama.strip()
+    username = username.strip()
+    if not nama or not username:
+        return RedirectResponse(f"/pelanggan/{nama_pelanggan}/edit", status_code=303)
+
+    conn = get_db_connection()
+    pelanggan = conn.execute(
+        "SELECT * FROM pelanggan WHERE lower(nama) = lower(?)",
+        (nama_pelanggan,),
+    ).fetchone()
+    if not pelanggan:
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
+    password_hash = pelanggan["password_hash"]
+    if password.strip():
+        password_hash = hash_customer_password(password)
+    conn.execute(
+        "UPDATE pelanggan SET nama = ?, username = ?, password_hash = ?, alamat = ? WHERE id = ?",
+        (nama, username, password_hash, alamat.strip(), pelanggan["id"]),
+    )
+    conn.execute(
+        "UPDATE unit_servis SET nama_pelanggan = ? WHERE lower(nama_pelanggan) = lower(?)",
+        (nama, nama_pelanggan),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/dashboard", status_code=303)
+
+@app.get("/pelanggan/{nama_pelanggan}/tambah-perangkat")
+def halaman_tambah_perangkat(request: Request, nama_pelanggan: str):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+    return templates.TemplateResponse(
+        request=request,
+        name="tambah_perangkat.html",
+        context={"nama_pelanggan": nama_pelanggan},
+    )
+
+@app.post("/pelanggan/{nama_pelanggan}/tambah-perangkat")
+def tambah_perangkat(
+    request: Request,
+    nama_pelanggan: str,
+    mode: str = Form(...),
+    nama_unit: str = Form(...),
+    kategori_lainnya: str = Form(""),
+):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    mode = kategori_lainnya.strip() if mode == "Other" else mode.strip()
+    if not mode:
+        return RedirectResponse("/dashboard", status_code=303)
+
+    conn = get_db_connection()
+    conn.execute("INSERT OR IGNORE INTO pelanggan (nama) VALUES (?)", (nama_pelanggan.strip(),))
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?)",
+        (nama_pelanggan.strip(), mode, nama_unit.strip(), "Baru Terdaftar"),
+    )
+    unit_id = cursor.lastrowid
+    kode_unik = f"{mode[:3].upper()}-{unit_id:03d}"
+    cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
+    cursor.execute(
+        """
+        INSERT INTO history_servis
+        (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (unit_id, datetime.now().strftime("%Y-%m-%d"), "Registrasi perangkat", "-", "Belum diservis", "Teknisi", "-"),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/dashboard", status_code=303)
 
 @app.post("/tambah-unit")
 def tambah_unit(
@@ -61,6 +418,9 @@ def tambah_unit(
     mode: str = Form(...),
     nama_unit: str = Form(...)
 ):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
     conn = get_db_connection()
     
     # 1. Simpan unit dulu untuk mendapatkan ID otomatis
@@ -77,6 +437,14 @@ def tambah_unit(
     
     # 3. Update kode_unik ke database
     cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
+    cursor.execute(
+        """
+        INSERT INTO history_servis
+        (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (unit_id, datetime.now().strftime("%Y-%m-%d"), "Registrasi perangkat", "-", "Belum diservis", "Teknisi", "-"),
+    )
     conn.commit()
     
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
@@ -90,9 +458,9 @@ def tambah_unit(
 
 # 🏷️ ENDPOINT KHUSUS: Generate QR Code dalam bentuk Gambar (PNG)
 @app.get("/generate-qr/{kode_unik}")
-def generate_qr(kode_unik: str):
+def generate_qr(request: Request, kode_unik: str):
     # Buat QR Code berisi teks kode_unik
-    img = qrcode.make(f"https://aplikasi-ac.com/unit/{kode_unik}")
+    img = qrcode.make(str(request.url_for("lihat_unit", kode_unik=kode_unik)))
     
     # Simpan ke memori sementara (RAM) lalu kirim sebagai gambar PNG
     buf = BytesIO()
@@ -101,8 +469,34 @@ def generate_qr(kode_unik: str):
     
     return StreamingResponse(buf, media_type="image/png")
 
+@app.get("/print-qr/{kode_unik}")
+def print_qr(request: Request, kode_unik: str):
+    role = get_session_role(request)
+    if role not in {"teknisi", "customer"}:
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    unit = conn.execute("SELECT * FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
+    if role == "customer":
+        customer_username = request.cookies.get("customer_username", "")
+        customer = conn.execute("SELECT nama FROM pelanggan WHERE username = ?", (customer_username,)).fetchone()
+        if not customer or not unit or customer["nama"].lower() != unit["nama_pelanggan"].lower():
+            unit = None
+    conn.close()
+    if not unit:
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Perangkat Tidak Ditemukan", "pesan": "Kode perangkat tidak terdaftar.", "dashboard_url": "/dashboard"},
+            status_code=404,
+        )
+    return templates.TemplateResponse(request=request, name="print_qr.html", context={"unit": unit})
+
 @app.post("/ubah-status/{unit_id}")
 def ubah_status(request: Request, unit_id: int):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
     conn = get_db_connection()
     unit = conn.execute("SELECT status FROM unit_servis WHERE id = ?", (unit_id,)).fetchone()
     
@@ -116,6 +510,22 @@ def ubah_status(request: Request, unit_id: int):
             status_baru = "Perlu Servis"
 
         conn.execute("UPDATE unit_servis SET status = ? WHERE id = ?", (status_baru, unit_id))
+        conn.execute(
+            """
+            INSERT INTO history_servis
+            (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                unit_id,
+                datetime.now().strftime("%Y-%m-%d"),
+                "Perubahan status perangkat",
+                status_sekarang,
+                status_baru,
+                "Teknisi",
+                "Sesuai kebutuhan",
+            ),
+        )
         conn.commit()
 
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
@@ -129,6 +539,9 @@ def ubah_status(request: Request, unit_id: int):
 
 @app.post("/hapus-unit/{unit_id}")
 def hapus_unit(request: Request, unit_id: int):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
     conn = get_db_connection()
     conn.execute("DELETE FROM unit_servis WHERE id = ?", (unit_id,))
     conn.commit()
@@ -141,3 +554,338 @@ def hapus_unit(request: Request, unit_id: int):
         name="partials/daftar_unit.html",
         context={"daftar_unit": daftar_unit}
     )
+
+@app.get("/scan-qr")
+def halaman_scan_qr(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="scan_qr.html",
+        context={"judul": "Scan QR Perangkat", "dashboard_url": get_dashboard_url(request)}
+    )
+
+@app.get("/login/teknisi")
+def halaman_login_teknisi(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={
+            "judul": "Login Teknisi",
+            "role": "teknisi",
+            "error": None
+        }
+    )
+
+@app.post("/login/teknisi")
+def login_teknisi(request: Request, username: str = Form(...), password: str = Form(...)):
+    if TECHNICIAN_PASSWORD is None:
+        error = "TECHNICIAN_PASSWORD belum diatur di environment aplikasi."
+    elif hmac.compare_digest(username, TECHNICIAN_USERNAME) and hmac.compare_digest(password, TECHNICIAN_PASSWORD):
+        response = RedirectResponse("/dashboard", status_code=303)
+        response.set_cookie("ac_session", create_session("teknisi"), httponly=True, samesite="lax")
+        response.set_cookie("technician_username", username, httponly=True, samesite="lax")
+        return response
+    else:
+        error = "Username atau password salah."
+
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={"judul": "Login Teknisi", "role": "teknisi", "error": error},
+        status_code=401
+    )
+
+@app.get("/login/customer")
+def halaman_login_customer(request: Request):
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={
+            "judul": "Login Customer",
+            "role": "customer",
+            "error": None
+        }
+    )
+
+@app.post("/login/customer")
+def login_customer(request: Request, username: str = Form(...), password: str = Form(...)):
+    conn = get_db_connection()
+    customer = conn.execute(
+        "SELECT nama, username, password_hash FROM pelanggan WHERE username = ?",
+        (username.strip(),),
+    ).fetchone()
+    conn.close()
+
+    if customer and customer["password_hash"] and hmac.compare_digest(
+        customer["password_hash"], hash_customer_password(password)
+    ):
+        response = RedirectResponse("/dashboard/customer", status_code=303)
+        response.set_cookie("ac_session", create_session("customer"), httponly=True, samesite="lax")
+        response.set_cookie("customer_username", customer["username"], httponly=True, samesite="lax")
+        return response
+
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={
+            "judul": "Login Customer",
+            "role": "customer",
+            "error": "Username atau password customer salah."
+        },
+        status_code=401
+    )
+
+@app.get("/unit/{kode_unik}")
+def lihat_unit(request: Request, kode_unik: str):
+    conn = get_db_connection()
+    unit = conn.execute("SELECT * FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
+    history = []
+    foto_history = {}
+    alamat_pelanggan = ""
+    teknisi_phone = ""
+    if unit:
+        history = conn.execute(
+            "SELECT * FROM history_servis WHERE unit_id = ? ORDER BY tanggal DESC, id DESC",
+            (unit["id"],),
+        ).fetchall()
+        customer = conn.execute(
+            "SELECT alamat FROM pelanggan WHERE lower(nama) = lower(?)",
+            (unit["nama_pelanggan"],),
+        ).fetchone()
+        alamat_pelanggan = customer["alamat"] if customer and customer["alamat"] else "Belum ada alamat"
+        if history:
+            serviced_by = conn.execute(
+                "SELECT no_hp FROM profil_teknisi WHERE username = ? OR username = ? LIMIT 1",
+                (history[0]["nama_teknisi"], TECHNICIAN_USERNAME),
+            ).fetchone()
+            teknisi_phone = normalize_phone(serviced_by["no_hp"] if serviced_by else "")
+        foto_rows = conn.execute(
+            "SELECT history_id, jenis, nama_file FROM history_foto WHERE history_id IN (SELECT id FROM history_servis WHERE unit_id = ?)",
+            (unit["id"],),
+        ).fetchall()
+        for foto in foto_rows:
+            foto_history.setdefault(foto["history_id"], {}).setdefault(foto["jenis"], []).append(foto["nama_file"])
+        for item in history:
+            foto_history.setdefault(item["id"], {})
+            if item["foto_before"] and not foto_history[item["id"]].get("before"):
+                foto_history[item["id"]]["before"] = [item["foto_before"]]
+            if item["foto_after"] and not foto_history[item["id"]].get("after"):
+                foto_history[item["id"]]["after"] = [item["foto_after"]]
+    conn.close()
+    if not unit:
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Perangkat Tidak Ditemukan", "pesan": "Kode QR tidak terdaftar.", "dashboard_url": get_dashboard_url(request)},
+            status_code=404
+        )
+    request_text = (
+        "Halo Teknisi, saya ingin request servis.\n"
+        f"Nama pelanggan: {unit['nama_pelanggan']}\n"
+        f"Alamat: {alamat_pelanggan}\n"
+        f"Perangkat: {unit['unit']} ({unit['kode_unik']})\n"
+        "Request servis: "
+    )
+    request_url = f"https://wa.me/{teknisi_phone}?text={quote(request_text)}" if teknisi_phone else None
+    return templates.TemplateResponse(
+        request=request,
+        name="unit.html",
+        context={
+            "unit": unit,
+            "history": history,
+            "foto_history": foto_history,
+            "is_teknisi": get_session_role(request) == "teknisi",
+            "reminder": reminder_text(history[0]["servis_selanjutnya"] if history else None),
+            "dashboard_url": get_dashboard_url(request),
+            "request_url": request_url,
+            "teknisi_phone_available": bool(teknisi_phone),
+        },
+    )
+
+@app.get("/unit/{kode_unik}/tambah-history")
+def halaman_tambah_history(request: Request, kode_unik: str):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    unit = conn.execute("SELECT * FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
+    conn.close()
+    if not unit:
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Perangkat Tidak Ditemukan", "pesan": "Kode perangkat tidak terdaftar.", "dashboard_url": get_dashboard_url(request)},
+            status_code=404,
+        )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="tambah_history.html",
+        context={
+            "unit": unit,
+            "tanggal_sekarang": datetime.now().strftime("%Y-%m-%d"),
+            "nama_teknisi": request.cookies.get("technician_username", TECHNICIAN_USERNAME),
+        },
+    )
+
+@app.post("/unit/{kode_unik}/tambah-history")
+def tambah_history(
+    request: Request,
+    kode_unik: str,
+    tanggal: str = Form(...),
+    item_servis: List[str] = Form(...),
+    kondisi_before: str = Form(...),
+    kondisi_after: str = Form(...),
+    nama_teknisi: str = Form(...),
+    servis_selanjutnya: str = Form(...),
+    foto_before: List[UploadFile] = File(None),
+    foto_after: List[UploadFile] = File(None),
+):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    unit = conn.execute("SELECT id FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
+    if not unit:
+        conn.close()
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Perangkat Tidak Ditemukan", "pesan": "Kode perangkat tidak terdaftar.", "dashboard_url": get_dashboard_url(request)},
+            status_code=404,
+        )
+
+    item_list = [item.strip() for item in item_servis if item.strip()]
+    if not item_list:
+        conn.close()
+        return RedirectResponse(f"/unit/{kode_unik}/tambah-history", status_code=303)
+
+    before_filenames = simpan_banyak_foto(foto_before, f"{kode_unik}-before")
+    after_filenames = simpan_banyak_foto(foto_after, f"{kode_unik}-after")
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO history_servis
+        (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya, foto_before, foto_after)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            unit["id"],
+            tanggal.strip(),
+            "\n".join(item_list),
+            kondisi_before.strip(),
+            kondisi_after.strip(),
+            nama_teknisi.strip(),
+            servis_selanjutnya.strip(),
+            before_filenames[0] if before_filenames else None,
+            after_filenames[0] if after_filenames else None,
+        ),
+    )
+    history_id = cursor.lastrowid
+    cursor.executemany(
+        "INSERT INTO history_foto (history_id, jenis, nama_file) VALUES (?, ?, ?)",
+        [(history_id, "before", filename) for filename in before_filenames]
+        + [(history_id, "after", filename) for filename in after_filenames],
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+@app.get("/unit/{kode_unik}/history/{history_id}/edit")
+def halaman_edit_history(request: Request, kode_unik: str, history_id: int):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    record = conn.execute(
+        """
+        SELECT h.*, u.kode_unik, u.nama_pelanggan, u.unit
+        FROM history_servis h JOIN unit_servis u ON u.id = h.unit_id
+        WHERE u.kode_unik = ? AND h.id = ?
+        """,
+        (kode_unik, history_id),
+    ).fetchone()
+    if not record:
+        conn.close()
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "History Tidak Ditemukan", "pesan": "Catatan history tidak terdaftar.", "dashboard_url": get_dashboard_url(request)},
+            status_code=404,
+        )
+    photos = conn.execute(
+        "SELECT jenis, nama_file FROM history_foto WHERE history_id = ? ORDER BY id",
+        (history_id,),
+    ).fetchall()
+    conn.close()
+    photo_map = {"before": [], "after": []}
+    for photo in photos:
+        photo_map[photo["jenis"]].append(photo["nama_file"])
+    if record["foto_before"] and not photo_map["before"]:
+        photo_map["before"].append(record["foto_before"])
+    if record["foto_after"] and not photo_map["after"]:
+        photo_map["after"].append(record["foto_after"])
+    return templates.TemplateResponse(request=request, name="edit_history.html", context={"record": record, "photo_map": photo_map})
+
+@app.post("/unit/{kode_unik}/history/{history_id}/edit")
+def edit_history(
+    request: Request,
+    kode_unik: str,
+    history_id: int,
+    tanggal: str = Form(...),
+    item_servis: str = Form(...),
+    kondisi_before: str = Form(...),
+    kondisi_after: str = Form(...),
+    nama_teknisi: str = Form(...),
+    servis_selanjutnya: str = Form(...),
+    foto_before: List[UploadFile] = File(None),
+    foto_after: List[UploadFile] = File(None),
+):
+    if get_session_role(request) != "teknisi":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    record = conn.execute(
+        "SELECT h.* FROM history_servis h JOIN unit_servis u ON u.id = h.unit_id WHERE u.kode_unik = ? AND h.id = ?",
+        (kode_unik, history_id),
+    ).fetchone()
+    if not record:
+        conn.close()
+        return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+    before_filenames = simpan_banyak_foto(foto_before, f"{kode_unik}-before")
+    after_filenames = simpan_banyak_foto(foto_after, f"{kode_unik}-after")
+    before_filename = record["foto_before"] or (before_filenames[0] if before_filenames else None)
+    after_filename = record["foto_after"] or (after_filenames[0] if after_filenames else None)
+    conn.execute(
+        """
+        UPDATE history_servis
+        SET tanggal = ?, item_servis = ?, kondisi_before = ?, kondisi_after = ?,
+            nama_teknisi = ?, servis_selanjutnya = ?, foto_before = ?, foto_after = ?
+        WHERE id = ?
+        """,
+        (
+            tanggal.strip(), item_servis.strip(), kondisi_before.strip(), kondisi_after.strip(),
+            nama_teknisi.strip(), servis_selanjutnya.strip(), before_filename, after_filename, history_id,
+        ),
+    )
+    conn.executemany(
+        "INSERT INTO history_foto (history_id, jenis, nama_file) VALUES (?, ?, ?)",
+        [(history_id, "before", filename) for filename in before_filenames]
+        + [(history_id, "after", filename) for filename in after_filenames],
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+@app.get("/unit")
+def cari_unit(request: Request, kode_unik: str):
+    return RedirectResponse(f"/unit/{kode_unik.strip().upper()}", status_code=303)
+
+@app.get("/logout")
+def logout():
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie("ac_session")
+    response.delete_cookie("technician_username")
+    response.delete_cookie("customer_name")
+    response.delete_cookie("customer_username")
+    return response

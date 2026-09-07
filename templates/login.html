@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ judul }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-950 min-h-screen p-4 md:p-8 text-slate-900" style="font-family: 'DM Sans', sans-serif; background-image: radial-gradient(circle at 85% 10%, rgba(34,211,238,.18), transparent 26rem), radial-gradient(circle at 10% 90%, rgba(37,99,235,.22), transparent 30rem);">
+    <main class="mx-auto mt-10 max-w-md overflow-hidden rounded-[2rem] bg-white/95 p-7 shadow-2xl shadow-cyan-950/30 ring-1 ring-white/20 md:mt-16 md:p-9">
+        <div class="mb-8 text-center"><div class="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-950 text-sm font-bold tracking-widest text-cyan-300">AC</div><p class="text-xs font-bold uppercase tracking-[0.25em] text-blue-600">Secure access</p><h1 class="mt-2 text-2xl font-bold text-slate-950" style="font-family: 'Space Grotesk', sans-serif;">{{ judul }}</h1><p class="mt-2 text-sm text-slate-500">Masuk untuk melanjutkan ke sistem.</p></div>
+        {% if error %}<p class="mb-5 rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{{ error }}</p>{% endif %}
+        {% if role == "teknisi" %}
+        <form method="post" action="/login/teknisi" class="mt-6 space-y-4">
+            <input name="username" required placeholder="Username" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+            <input name="password" type="password" required placeholder="Password" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+        {% else %}
+        <form method="post" action="/login/customer" class="mt-6 space-y-4">
+            <input name="username" required placeholder="Username" autocomplete="username" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+            <input name="password" type="password" required placeholder="Password" autocomplete="current-password" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 text-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+        {% endif %}
+            <button type="submit" class="w-full rounded-2xl bg-blue-600 py-3.5 font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-700">Masuk</button>
+        </form>
+        <a href="/" class="mt-6 block text-center text-sm font-medium text-slate-500 transition hover:text-blue-600">&#8592; Kembali ke halaman awal</a>
+    </main>
+</body>
+</html>

@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ judul }}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode" defer></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+</head>
+<body class="min-h-screen bg-slate-950 p-4 text-slate-900 md:p-8" style="font-family: 'DM Sans', sans-serif; background-image: radial-gradient(circle at 70% 0%, rgba(34,211,238,.16), transparent 28rem);">
+    <main class="mx-auto mt-8 max-w-lg rounded-[2rem] bg-white/95 p-6 shadow-2xl shadow-cyan-950/30 ring-1 ring-white/20 md:p-8">
+        <div class="mb-6 text-center"><div class="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-950 text-xs font-bold tracking-widest text-cyan-300">QR</div><p class="text-xs font-bold uppercase tracking-[0.2em] text-blue-600">Device lookup</p><h1 class="mt-2 text-2xl font-bold text-slate-950" style="font-family: 'Space Grotesk', sans-serif;">{{ judul }}</h1><p id="status" class="mt-2 text-sm text-slate-500">Izinkan akses kamera untuk memindai kode.</p></div>
+        <div id="reader" class="overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 p-2"></div>
+        <form method="get" action="/unit" class="mt-5 flex gap-2">
+            <input id="kode" name="kode_unik" required placeholder="Atau masukkan kode perangkat" class="min-w-0 flex-1 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm outline-none focus:border-blue-500 focus:bg-white">
+            <button class="rounded-xl bg-slate-950 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-800">Buka</button>
+        </form>
+        <a href="{{ dashboard_url|default('/') }}" class="mt-6 block text-center text-sm font-medium text-slate-500 hover:text-blue-600">&#8592; Kembali ke dashboard</a>
+    </main>
+    <script>
+        window.addEventListener('load', () => {
+            const status = document.getElementById('status');
+            const scanner = new Html5Qrcode('reader');
+            const onScan = (decodedText) => {
+                const match = decodedText.match(/\/unit\/([^/?#]+)/i) || decodedText.match(/^([A-Z]{2,4}-\d+)$/i);
+                if (match) window.location.href = '/unit/' + encodeURIComponent(match[1]);
+                else status.textContent = 'QR terbaca, tetapi bukan QR perangkat aplikasi ini.';
+            };
+            scanner.start({ facingMode: 'environment' }, { fps: 10, qrbox: { width: 240, height: 240 } }, onScan)
+                .catch(() => { status.textContent = 'Kamera tidak tersedia. Masukkan kode unit secara manual.'; });
+        });
+    </script>
+</body>
+</html>

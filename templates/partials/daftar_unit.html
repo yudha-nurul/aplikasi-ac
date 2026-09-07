@@ -1,9 +1,9 @@
 {% for item in daftar_unit %}
-<div class="p-4 rounded-xl border border-slate-200 bg-slate-50 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+<div class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-blue-200 hover:shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
     
     <div class="flex items-center gap-3">
         {% if item.kode_unik %}
-        <div class="bg-white p-1 rounded-lg border border-slate-200 flex-shrink-0 text-center">
+        <div class="bg-slate-50 p-1.5 rounded-xl border border-slate-200 flex-shrink-0 text-center">
             <img src="/generate-qr/{{ item.kode_unik }}" alt="QR Code" class="w-14 h-14 object-contain">
             <span class="text-[9px] font-mono font-bold text-slate-600 block -mt-1">{{ item.kode_unik }}</span>
         </div>
