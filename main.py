@@ -37,11 +37,52 @@ def load_local_env():
             os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 load_local_env()
+DATABASE_URL = os.getenv("DATABASE_URL")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "ganti-secret-aplikasi-ac")
 TECHNICIAN_USERNAME = os.getenv("TECHNICIAN_USERNAME", "teknisi")
 TECHNICIAN_PASSWORD = os.getenv("TECHNICIAN_PASSWORD")
 
+class PostgresCursor:
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def execute(self, query, params=None):
+        query = query.replace("?", "%s")
+        return self._cursor.execute(query, params or ())
+
+    def executemany(self, query, params):
+        query = query.replace("?", "%s")
+        return self._cursor.executemany(query, params)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+class PostgresConnection:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def cursor(self):
+        return PostgresCursor(self._connection.cursor())
+
+    def execute(self, query, params=None):
+        cursor = self.cursor()
+        cursor.execute(query, params)
+        return cursor
+
+    def commit(self):
+        self._connection.commit()
+
+    def close(self):
+        self._connection.close()
+
 def get_db_connection():
+    if DATABASE_URL:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        return PostgresConnection(
+            psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+        )
     conn = sqlite3.connect(DB_NAME)
     conn.row_factory = sqlite3.Row
     return conn
@@ -77,6 +118,73 @@ def get_dashboard_url(request: Request) -> str:
 def init_db():
     conn = get_db_connection()
     cursor = conn.cursor()
+    if DATABASE_URL:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS unit_servis (
+                id SERIAL PRIMARY KEY,
+                kode_unik TEXT UNIQUE,
+                nama_pelanggan TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                unit TEXT NOT NULL,
+                status TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS pelanggan (
+                id SERIAL PRIMARY KEY,
+                nama TEXT NOT NULL UNIQUE,
+                username TEXT,
+                password_hash TEXT,
+                alamat TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS profil_teknisi (
+                id SERIAL PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                no_hp TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS history_servis (
+                id SERIAL PRIMARY KEY,
+                unit_id INTEGER NOT NULL REFERENCES unit_servis(id),
+                tanggal TEXT NOT NULL,
+                item_servis TEXT NOT NULL,
+                kondisi_before TEXT NOT NULL,
+                kondisi_after TEXT NOT NULL,
+                nama_teknisi TEXT NOT NULL,
+                servis_selanjutnya TEXT NOT NULL,
+                foto_before TEXT,
+                foto_after TEXT
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS history_foto (
+                id SERIAL PRIMARY KEY,
+                history_id INTEGER NOT NULL REFERENCES history_servis(id),
+                jenis TEXT NOT NULL CHECK (jenis IN ('before', 'after')),
+                nama_file TEXT NOT NULL
+            )
+        """)
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS username TEXT")
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS password_hash TEXT")
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS alamat TEXT")
+        cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_before TEXT")
+        cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_after TEXT")
+        cursor.execute(
+            "INSERT INTO profil_teknisi (username) VALUES (?) ON CONFLICT (username) DO NOTHING",
+            (TECHNICIAN_USERNAME,),
+        )
+        cursor.execute(
+            "INSERT INTO pelanggan (nama) SELECT DISTINCT nama_pelanggan FROM unit_servis WHERE 1=1 "
+            "ON CONFLICT (nama) DO NOTHING"
+        )
+        cursor.execute("UPDATE pelanggan SET username = nama WHERE username IS NULL OR username = ''")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pelanggan_username ON pelanggan(username)")
+        conn.commit()
+        conn.close()
+        return
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS unit_servis (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,7 +219,7 @@ def init_db():
         )
     """)
     cursor.execute(
-        "INSERT OR IGNORE INTO profil_teknisi (username) VALUES (?)",
+        "INSERT INTO profil_teknisi (username) VALUES (?) ON CONFLICT (username) DO NOTHING",
         (TECHNICIAN_USERNAME,),
     )
     cursor.execute("""
@@ -144,7 +252,8 @@ def init_db():
     if "foto_after" not in history_columns:
         cursor.execute("ALTER TABLE history_servis ADD COLUMN foto_after TEXT")
     cursor.execute(
-        "INSERT OR IGNORE INTO pelanggan (nama) SELECT DISTINCT nama_pelanggan FROM unit_servis"
+        "INSERT INTO pelanggan (nama) SELECT DISTINCT nama_pelanggan FROM unit_servis WHERE 1=1 "
+        "ON CONFLICT (nama) DO NOTHING"
     )
     cursor.execute("UPDATE pelanggan SET username = nama WHERE username IS NULL OR username = ''")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pelanggan_username ON pelanggan(username)")
@@ -296,7 +405,8 @@ def tambah_pelanggan(
     if nama:
         conn = get_db_connection()
         conn.execute(
-            "INSERT OR IGNORE INTO pelanggan (nama, username, password_hash) VALUES (?, ?, ?)",
+            "INSERT INTO pelanggan (nama, username, password_hash) VALUES (?, ?, ?) "
+            "ON CONFLICT (nama) DO NOTHING",
             (nama, username.strip(), hash_customer_password(password)),
         )
         conn.execute("UPDATE pelanggan SET alamat = ? WHERE nama = ?", (alamat.strip(), nama))
@@ -391,13 +501,16 @@ def tambah_perangkat(
         return RedirectResponse("/dashboard", status_code=303)
 
     conn = get_db_connection()
-    conn.execute("INSERT OR IGNORE INTO pelanggan (nama) VALUES (?)", (nama_pelanggan.strip(),))
+    conn.execute(
+        "INSERT INTO pelanggan (nama) VALUES (?) ON CONFLICT (nama) DO NOTHING",
+        (nama_pelanggan.strip(),),
+    )
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?)",
+        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?) RETURNING id",
         (nama_pelanggan.strip(), mode, nama_unit.strip(), "Baru Terdaftar"),
     )
-    unit_id = cursor.lastrowid
+    unit_id = cursor.fetchone()["id"]
     kode_unik = f"{mode[:3].upper()}-{unit_id:03d}"
     cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
     cursor.execute(
@@ -427,10 +540,10 @@ def tambah_unit(
     # 1. Simpan unit dulu untuk mendapatkan ID otomatis
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?)",
+        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?) RETURNING id",
         (nama_pelanggan, mode, nama_unit, "Baru Terdaftar")
     )
-    unit_id = cursor.lastrowid
+    unit_id = cursor.fetchone()["id"]
     
     # 2. Buat Kode Unik berdasarkan ID (Contoh: AC-001, KLK-002, dll)
     prefix = mode[:3].upper() # AC -> AC, Kulkas -> KUL
@@ -767,7 +880,7 @@ def tambah_history(
         """
         INSERT INTO history_servis
         (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya, foto_before, foto_after)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id
         """,
         (
             unit["id"],
@@ -781,7 +894,7 @@ def tambah_history(
             after_filenames[0] if after_filenames else None,
         ),
     )
-    history_id = cursor.lastrowid
+    history_id = cursor.fetchone()["id"]
     cursor.executemany(
         "INSERT INTO history_foto (history_id, jenis, nama_file) VALUES (?, ?, ?)",
         [(history_id, "before", filename) for filename in before_filenames]
