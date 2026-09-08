@@ -16,11 +16,12 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+RUNTIME_DIR = "/tmp" if os.getenv("VERCEL") else os.path.dirname(__file__)
+UPLOAD_DIR = os.path.join(RUNTIME_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
-DB_NAME = "aplikasi_ac.db"
+DB_NAME = os.path.join(RUNTIME_DIR, "aplikasi_ac.db")
 
 def load_local_env():
     env_path = os.path.join(os.path.dirname(__file__), ".env")
