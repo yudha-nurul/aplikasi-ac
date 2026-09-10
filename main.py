@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
-RUNTIME_DIR = "/tmp" if os.getenv("VERCEL") else os.path.dirname(__file__)
+RUNTIME_DIR = os.path.dirname(__file__)
 UPLOAD_DIR = os.path.join(RUNTIME_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
@@ -313,6 +313,10 @@ def halaman_awal(request: Request):
         name="index.html",
         context={"nama_aplikasi": "Sistem Manajemen Servis AC"}
     )
+
+@app.get("/health")
+def health_check():
+    return {"status": "ok"}
 
 @app.get("/dashboard")
 def halaman_dashboard(request: Request):
