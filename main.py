@@ -819,6 +819,7 @@ def lihat_unit(request: Request, kode_unik: str):
         "Request servis: "
     )
     request_url = f"https://wa.me/{teknisi_phone}?text={quote(request_text)}" if teknisi_phone else None
+    role = get_session_role(request)
     return templates.TemplateResponse(
         request=request,
         name="unit.html",
@@ -826,13 +827,50 @@ def lihat_unit(request: Request, kode_unik: str):
             "unit": unit,
             "history": history,
             "foto_history": foto_history,
-            "is_teknisi": get_session_role(request) == "teknisi",
+            "is_teknisi": role == "teknisi",
+            "is_logged_in": role in {"teknisi", "customer"},
             "reminder": reminder_text(history[0]["servis_selanjutnya"] if history else None),
             "dashboard_url": get_dashboard_url(request),
             "request_url": request_url,
             "teknisi_phone_available": bool(teknisi_phone),
         },
     )
+
+@app.post("/unit/{kode_unik}/foto-perangkat")
+def tambah_foto_perangkat(
+    request: Request,
+    kode_unik: str,
+    foto_perangkat: UploadFile = File(...),
+):
+    role = get_session_role(request)
+    if role not in {"teknisi", "customer"}:
+        return RedirectResponse("/", status_code=303)
+
+    if not foto_perangkat or not foto_perangkat.filename:
+        return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+    filename = simpan_foto(foto_perangkat, f"{kode_unik}-perangkat")
+    if not filename:
+        return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+    conn = get_db_connection()
+    unit = conn.execute("SELECT id FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
+    if not unit:
+        conn.close()
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Perangkat Tidak Ditemukan", "pesan": "Kode perangkat tidak terdaftar.", "dashboard_url": get_dashboard_url(request)},
+            status_code=404,
+        )
+
+    conn.execute(
+        "UPDATE unit_servis SET foto_perangkat = ? WHERE id = ?",
+        (filename, unit["id"]),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
 
 @app.get("/unit/{kode_unik}/tambah-history")
 def halaman_tambah_history(request: Request, kode_unik: str):

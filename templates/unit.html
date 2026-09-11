@@ -51,6 +51,17 @@
                     <p class="mt-3 text-center text-xs text-slate-500">Klik QR untuk masuk ke menu cetak</p>
                 </div>
             </div>
+            {% if is_logged_in %}
+            <form method="post" action="/unit/{{ unit.kode_unik }}/foto-perangkat" enctype="multipart/form-data" class="mt-5 rounded-2xl border border-blue-100 bg-blue-50 p-4">
+                <div class="flex flex-col gap-3 sm:flex-row sm:items-end">
+                    <div class="flex-1">
+                        <label for="foto_perangkat" class="block text-[10px] uppercase tracking-wide text-blue-700">Tambah Foto Perangkat</label>
+                        <input id="foto_perangkat" name="foto_perangkat" type="file" accept="image/*" capture="environment" class="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-blue-600 file:px-3 file:py-2 file:text-sm file:font-semibold file:text-white">
+                    </div>
+                    <button type="submit" class="shrink-0 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:bg-blue-700">Simpan Foto</button>
+                </div>
+            </form>
+            {% endif %}
             <div class="mt-4">
                 {% if request_url %}
                 <a href="{{ request_url }}" target="_blank" rel="noopener" class="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-lg shadow-emerald-600/20 transition hover:-translate-y-0.5 hover:bg-emerald-700">Request Servis via WhatsApp &#8594;</a>
