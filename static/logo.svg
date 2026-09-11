@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" role="img" aria-labelledby="title desc">
+  <title id="title">Amanah Jaya Teknik</title>
+  <desc id="desc">Logo Aplikasi Servis AC Amanah Jaya Teknik</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#e0f2fe"/>
+      <stop offset="100%" stop-color="#dbeafe"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0%" stop-color="#1d4ed8"/>
+      <stop offset="100%" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="800" rx="54" fill="#f8fafc"/>
+  <rect x="90" y="90" width="620" height="620" rx="50" fill="url(#bg)" stroke="#0f172a" stroke-width="12"/>
+  <g transform="translate(128 150)">
+    <rect x="0" y="150" width="320" height="150" rx="20" fill="url(#panel)" stroke="#0f172a" stroke-width="10"/>
+    <rect x="26" y="178" width="270" height="96" rx="12" fill="#e0f2fe" opacity="0.8" stroke="#0f172a" stroke-width="8"/>
+    <path d="M24 205h32l18 50h51l18-50h32l-24 86H48z" fill="#0f172a" opacity="0.9"/>
+    <path d="M95 178h20v-42c0-14 11-25 25-25h78c14 0 25 11 25 25v42h20v-42c0-25-20-45-45-45H140c-25 0-45 20-45 45z" fill="#0f172a" opacity="0.9"/>
+    <path d="M10 156l40 32m300-32l-40 32" stroke="#0f172a" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="94" cy="234" r="24" fill="#eff6ff" stroke="#0f172a" stroke-width="8"/>
+    <circle cx="242" cy="234" r="24" fill="#eff6ff" stroke="#0f172a" stroke-width="8"/>
+    <path d="M70 64c0-23 18-41 41-41h114c23 0 41 18 41 41v40H70z" fill="#0f172a" opacity="0.92"/>
+    <path d="M120 70h86v20h-86z" fill="#e0f2fe"/>
+    <path d="M154 28l18 9 18-9" fill="none" stroke="#e0f2fe" stroke-width="7" stroke-linecap="round"/>
+    <rect x="120" y="86" width="108" height="28" rx="12" fill="#1d4ed8"/>
+  </g>
+  <g transform="translate(360 175)">
+    <rect x="46" y="134" width="96" height="190" rx="26" fill="#eff6ff" stroke="#0f172a" stroke-width="10"/>
+    <path d="M102 110l68 58" stroke="#0f172a" stroke-width="10" stroke-linecap="round"/>
+    <path d="M102 110L34 168" stroke="#0f172a" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="102" cy="332" r="26" fill="#eff6ff" stroke="#0f172a" stroke-width="10"/>
+    <circle cx="102" cy="332" r="9" fill="#0f172a"/>
+    <path d="M137 255c48 0 94 44 94 96" fill="none" stroke="#0f172a" stroke-width="10" stroke-linecap="round"/>
+    <path d="M68 255c-48 0-94 44-94 96" fill="none" stroke="#0f172a" stroke-width="10" stroke-linecap="round"/>
+    <circle cx="40" cy="362" r="30" fill="#eff6ff" stroke="#0f172a" stroke-width="10"/>
+    <circle cx="164" cy="362" r="30" fill="#eff6ff" stroke="#0f172a" stroke-width="10"/>
+    <path d="M46 150l34-32m-8 44l34-32m-93 0l35-33m80 0l35 33" stroke="#0f172a" stroke-width="8" stroke-linecap="round"/>
+  </g>
+  <g transform="translate(120 450)">
+    <text x="0" y="120" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="84" fill="#0f172a" letter-spacing="2">AMANAH</text>
+    <text x="0" y="210" font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="84" fill="#0f172a" letter-spacing="2">JAYA TEKNIK</text>
+  </g>
+</svg>

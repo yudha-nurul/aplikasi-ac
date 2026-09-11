@@ -17,7 +17,7 @@
                 <p class="text-xs text-slate-500">Pelanggan</p>
                 <p class="font-semibold text-slate-800 mt-1">{{ nama_pelanggan }}</p>
             </div>
-            <form id="device-form" method="post" action="/pelanggan/{{ nama_pelanggan|urlencode }}/tambah-perangkat" class="mt-6 space-y-4">
+            <form id="device-form" method="post" action="/pelanggan/{{ nama_pelanggan|urlencode }}/tambah-perangkat" enctype="multipart/form-data" class="mt-6 space-y-4">
                 <div>
                     <label for="mode" class="block text-sm font-semibold text-slate-700 mb-2">Kategori Perangkat</label>
                     <select id="mode" name="mode" required class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
@@ -35,6 +35,10 @@
                 <div>
                     <label for="nama_unit" class="block text-sm font-semibold text-slate-700 mb-2">Nama / Detail Perangkat</label>
                     <input id="nama_unit" name="nama_unit" required placeholder="Contoh: AC Kamar Utama 1/2 PK" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+                </div>
+                <div>
+                    <label for="foto_perangkat" class="block text-sm font-semibold text-slate-700 mb-2">Foto Perangkat</label>
+                    <input id="foto_perangkat" name="foto_perangkat" type="file" accept="image/*" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
                 </div>
                 <button type="submit" class="w-full rounded-xl bg-blue-600 py-3.5 font-semibold text-white shadow-lg shadow-blue-600/20 transition hover:-translate-y-0.5 hover:bg-blue-700">Simpan Perangkat</button>
             </form>

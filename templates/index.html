@@ -3,7 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2563eb">
     <title>Aplikasi Servis AC</title>
+    <link rel="manifest" href="/static/manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/htmx.org@1.9.10"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -15,11 +17,8 @@
         
         <div class="w-full overflow-hidden rounded-[2rem] bg-white/95 p-7 shadow-2xl shadow-cyan-950/30 ring-1 ring-white/20 md:p-9">
             <div class="mb-8 text-center">
-                <!-- Logo Hati dengan animasi -->
-                <div class="mx-auto mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-red-500 to-pink-500 text-4xl font-bold tracking-widest shadow-lg shadow-red-500/30 hover:shadow-red-500/50 transition-all duration-300 transform hover:scale-110">
-                    ❤️
-                </div>
-                <p class="text-xs font-bold uppercase tracking-[0.25em] text-red-600">Service with love</p>
+                <img src="/static/logo.svg" alt="Amanah Jaya Teknik" class="mx-auto mb-5 h-24 w-auto drop-shadow-lg">
+                <p class="text-xs font-bold uppercase tracking-[0.25em] text-blue-600">Amanah Jaya Teknik</p>
                 <h1 class="mt-2 text-2xl font-bold text-slate-950" style="font-family: 'Space Grotesk', sans-serif;">{{ nama_aplikasi }}</h1>
                 <p class="mt-2 text-sm leading-6 text-slate-500">Kelola perangkat, servis, dan riwayat perawatan dalam satu tempat.</p>
             </div>

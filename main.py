@@ -18,8 +18,11 @@ app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 RUNTIME_DIR = os.path.dirname(__file__)
 UPLOAD_DIR = os.path.join(RUNTIME_DIR, "uploads")
+STATIC_DIR = os.path.join(RUNTIME_DIR, "static")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+os.makedirs(STATIC_DIR, exist_ok=True)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 DB_NAME = os.path.join(RUNTIME_DIR, "aplikasi_ac.db")
 
@@ -126,7 +129,8 @@ def init_db():
                 nama_pelanggan TEXT NOT NULL,
                 mode TEXT NOT NULL,
                 unit TEXT NOT NULL,
-                status TEXT NOT NULL
+                status TEXT NOT NULL,
+                foto_perangkat TEXT
             )
         """)
         cursor.execute("""
@@ -170,6 +174,7 @@ def init_db():
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS username TEXT")
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS password_hash TEXT")
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS alamat TEXT")
+        cursor.execute("ALTER TABLE unit_servis ADD COLUMN IF NOT EXISTS foto_perangkat TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_before TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_after TEXT")
         cursor.execute(
@@ -192,7 +197,8 @@ def init_db():
             nama_pelanggan TEXT NOT NULL,
             mode TEXT NOT NULL,
             unit TEXT NOT NULL,
-            status TEXT NOT NULL
+            status TEXT NOT NULL,
+            foto_perangkat TEXT
         )
     """)
     cursor.execute("""
@@ -211,6 +217,9 @@ def init_db():
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN password_hash TEXT")
     if "alamat" not in customer_columns:
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN alamat TEXT")
+    unit_columns = {row[1] for row in cursor.execute("PRAGMA table_info(unit_servis)").fetchall()}
+    if "foto_perangkat" not in unit_columns:
+        cursor.execute("ALTER TABLE unit_servis ADD COLUMN foto_perangkat TEXT")
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS profil_teknisi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -496,6 +505,7 @@ def tambah_perangkat(
     mode: str = Form(...),
     nama_unit: str = Form(...),
     kategori_lainnya: str = Form(""),
+    foto_perangkat: UploadFile = File(None),
 ):
     if get_session_role(request) != "teknisi":
         return RedirectResponse("/login/teknisi", status_code=303)
@@ -504,6 +514,11 @@ def tambah_perangkat(
     if not mode:
         return RedirectResponse("/dashboard", status_code=303)
 
+    foto_perangkat_name = simpan_foto(
+        foto_perangkat,
+        f"perangkat-{datetime.now().strftime('%Y%m%d%H%M%S%f')}",
+    )
+
     conn = get_db_connection()
     conn.execute(
         "INSERT INTO pelanggan (nama) VALUES (?) ON CONFLICT (nama) DO NOTHING",
@@ -511,8 +526,8 @@ def tambah_perangkat(
     )
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status) VALUES (?, ?, ?, ?) RETURNING id",
-        (nama_pelanggan.strip(), mode, nama_unit.strip(), "Baru Terdaftar"),
+        "INSERT INTO unit_servis (nama_pelanggan, mode, unit, status, foto_perangkat) VALUES (?, ?, ?, ?, ?) RETURNING id",
+        (nama_pelanggan.strip(), mode, nama_unit.strip(), "Baru Terdaftar", foto_perangkat_name),
     )
     unit_id = cursor.fetchone()["id"]
     kode_unik = f"{mode[:3].upper()}-{unit_id:03d}"
