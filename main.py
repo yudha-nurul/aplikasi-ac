@@ -328,7 +328,7 @@ def halaman_dashboard(request: Request):
         "SELECT * FROM profil_teknisi WHERE username = ?",
         (TECHNICIAN_USERNAME,),
     ).fetchone()
-    daftar_pelanggan = conn.execute("SELECT * FROM pelanggan ORDER BY nama COLLATE NOCASE").fetchall()
+    daftar_pelanggan = conn.execute("SELECT * FROM pelanggan ORDER BY lower(nama)").fetchall()
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
     conn.close()
 
