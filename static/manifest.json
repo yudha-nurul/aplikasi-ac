@@ -8,42 +8,42 @@
   "theme_color": "#2563eb",
   "icons": [
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik16x16.ico",
+      "src": "/static/logo_amanah_jaya_teknik16x16.ico",
       "sizes": "16x16",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik24x24.ico",
+      "src": "/static/logo_amanah_jaya_teknik24x24.ico",
       "sizes": "24x24",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik32x32.ico",
+      "src": "/static/logo_amanah_jaya_teknik32x32.ico",
       "sizes": "32x32",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik48x48.ico",
+      "src": "/static/logo_amanah_jaya_teknik48x48.ico",
       "sizes": "48x48",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik64x64.ico",
+      "src": "/static/logo_amanah_jaya_teknik64x64.ico",
       "sizes": "64x64",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik96x96.ico",
+      "src": "/static/logo_amanah_jaya_teknik96x96.ico",
       "sizes": "96x96",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik128x128.ico",
+      "src": "/static/logo_amanah_jaya_teknik128x128.ico",
       "sizes": "128x128",
       "type": "image/x-icon"
     },
     {
-      "src": "/static/logo%20amanah%20jaya%20teknik256x256.ico",
+      "src": "/static/logo_amanah_jaya_teknik256x256.ico",
       "sizes": "256x256",
       "type": "image/x-icon"
     }
