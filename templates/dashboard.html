@@ -58,13 +58,14 @@
                     <summary class="flex cursor-pointer list-none flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
                         <div>
                             <div class="flex items-center gap-3">
-                                <p class="font-semibold text-slate-800">{{ teknisi_item.username }}</p>
+                                <p class="font-semibold text-slate-800">{{ teknisi_item.nama or teknisi_item.username }}</p>
                                 {% if teknisi_item.is_active in [1, '1', true] %}
                                 <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700">Aktif</span>
                                 {% else %}
                                 <span class="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-red-700">Nonaktif</span>
                                 {% endif %}
                             </div>
+                            <p class="mt-1 text-sm text-slate-500">Username: {{ teknisi_item.username }}</p>
                             <p class="mt-1 text-sm text-slate-500">No. HP: {{ teknisi_item.no_hp or 'Belum diisi' }}</p>
                             <p class="mt-1 text-xs text-slate-500">Role: {{ teknisi_item.role or 'teknisi' }}</p>
                         </div>
@@ -76,6 +77,11 @@
                             </div>
                             <span class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-blue-600 group-open:text-blue-700">Lihat detail pelanggan</span>
                             <a href="/teknisi/{{ teknisi_item.username }}/edit" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-blue-200 hover:text-blue-600">Edit / Reset Password</a>
+                            {% if teknisi_item.username != teknisi.username %}
+                            <form method="post" action="/teknisi/{{ teknisi_item.username }}/delete" class="inline">
+                                <button type="submit" class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600 hover:bg-red-100">Hapus</button>
+                            </form>
+                            {% endif %}
                             {% if teknisi_item.username != teknisi.username %}
                             <form method="post" action="/teknisi/{{ teknisi_item.username }}/toggle-status" class="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1.5">
                                 <label class="inline-flex items-center gap-1 text-[10px] font-semibold text-slate-600">
@@ -156,6 +162,11 @@
                             {{ item.units|length }} perangkat
                             <a href="/pelanggan/{{ item.nama|urlencode }}/detail" onclick="event.stopPropagation()" class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-semibold text-blue-600 shadow-sm hover:border-blue-200 hover:text-blue-700">Detail</a>
                             <a href="/pelanggan/{{ item.nama|urlencode }}/edit" onclick="event.stopPropagation()" class="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 font-semibold text-slate-700 shadow-sm hover:border-blue-200 hover:text-blue-600">Edit</a>
+                            {% if role == 'superuser' %}
+                            <form method="post" action="/pelanggan/{{ item.nama|urlencode }}/delete" onclick="event.stopPropagation()" class="inline">
+                                <button type="submit" class="rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 font-semibold text-red-600 shadow-sm hover:bg-red-100">Hapus</button>
+                            </form>
+                            {% endif %}
                             <span class="group-open:rotate-180 inline-block transition">⌄</span>
                         </span>
                     </summary>

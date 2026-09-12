@@ -148,6 +148,7 @@ def init_db():
             CREATE TABLE IF NOT EXISTS profil_teknisi (
                 id SERIAL PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
+                nama TEXT,
                 no_hp TEXT,
                 password_hash TEXT,
                 role TEXT DEFAULT 'teknisi',
@@ -184,6 +185,7 @@ def init_db():
         cursor.execute("ALTER TABLE unit_servis ADD COLUMN IF NOT EXISTS foto_perangkat TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_before TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_after TEXT")
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN IF NOT EXISTS nama TEXT")
         cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN IF NOT EXISTS password_hash TEXT")
         cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'teknisi'")
         cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN IF NOT EXISTS is_active INTEGER DEFAULT 1")
@@ -243,18 +245,22 @@ def init_db():
         CREATE TABLE IF NOT EXISTS profil_teknisi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
+            nama TEXT,
             no_hp TEXT,
             password_hash TEXT,
             role TEXT DEFAULT 'teknisi',
             is_active INTEGER DEFAULT 1
         )
     """)
+    profil_columns = {row[1] for row in cursor.execute("PRAGMA table_info(profil_teknisi)").fetchall()}
+    if "nama" not in profil_columns:
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN nama TEXT")
     cursor.execute(
-        "INSERT INTO profil_teknisi (username, password_hash, role) VALUES (?, ?, ?) ON CONFLICT (username) DO NOTHING",
-        (TECHNICIAN_USERNAME, hash_customer_password(TECHNICIAN_PASSWORD or ""), "superuser"),
+        "INSERT INTO profil_teknisi (username, nama, password_hash, role) VALUES (?, ?, ?, ?) ON CONFLICT (username) DO NOTHING",
+        (TECHNICIAN_USERNAME, TECHNICIAN_USERNAME, hash_customer_password(TECHNICIAN_PASSWORD or ""), "superuser"),
     )
     cursor.execute(
-        "UPDATE profil_teknisi SET password_hash = ?, role = 'superuser' WHERE username = ?",
+        "UPDATE profil_teknisi SET nama = COALESCE(NULLIF(nama, ''), username), password_hash = ?, role = 'superuser' WHERE username = ?",
         (hash_customer_password(TECHNICIAN_PASSWORD or ""), TECHNICIAN_USERNAME),
     )
     cursor.execute("""
@@ -536,6 +542,7 @@ def tambah_teknisi(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
+    nama: str = Form(""),
     no_hp: str = Form(""),
 ):
     role, _ = get_current_user(request)
@@ -552,10 +559,11 @@ def tambah_teknisi(
         )
 
     conn = get_db_connection()
+    display_name = (nama.strip() or username).strip()
     conn.execute(
-        "INSERT INTO profil_teknisi (username, password_hash, role, no_hp) VALUES (?, ?, 'teknisi', ?) "
-        "ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, role = 'teknisi', no_hp = excluded.no_hp",
-        (username, hash_customer_password(password), no_hp.strip()),
+        "INSERT INTO profil_teknisi (username, nama, password_hash, role, no_hp) VALUES (?, ?, ?, 'teknisi', ?) "
+        "ON CONFLICT(username) DO UPDATE SET nama = excluded.nama, password_hash = excluded.password_hash, role = 'teknisi', no_hp = excluded.no_hp",
+        (username, display_name, hash_customer_password(password), no_hp.strip()),
     )
     conn.commit()
     conn.close()
@@ -1027,6 +1035,8 @@ def halaman_edit_teknisi(request: Request, username: str):
 def edit_teknisi(
     request: Request,
     username: str,
+    nama: str = Form(""),
+    new_username: str = Form(""),
     no_hp: str = Form(""),
     password: str = Form(""),
 ):
@@ -1043,14 +1053,91 @@ def edit_teknisi(
         conn.close()
         return RedirectResponse("/dashboard", status_code=303)
 
+    updated_username = (new_username or username).strip()
+    updated_nama = (nama or teknisi["nama"] or teknisi["username"]).strip()
+    if not updated_username:
+        updated_username = teknisi["username"]
+    if not updated_nama:
+        updated_nama = teknisi["username"]
+
+    existing_teknisi = conn.execute(
+        "SELECT id FROM profil_teknisi WHERE lower(username) = lower(?) AND id != ?",
+        (updated_username, teknisi["id"]),
+    ).fetchone()
+    if existing_teknisi:
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
     password_hash = teknisi["password_hash"]
     if password.strip():
         password_hash = hash_customer_password(password)
 
     conn.execute(
-        "UPDATE profil_teknisi SET no_hp = ?, password_hash = ? WHERE id = ?",
-        (no_hp.strip(), password_hash, teknisi["id"]),
+        "UPDATE profil_teknisi SET nama = ?, username = ?, no_hp = ?, password_hash = ? WHERE id = ?",
+        (updated_nama, updated_username, no_hp.strip(), password_hash, teknisi["id"]),
     )
+    if updated_username != teknisi["username"]:
+        conn.execute(
+            "UPDATE pelanggan SET teknisi_username = ? WHERE teknisi_username = ?",
+            (updated_username, teknisi["username"]),
+        )
+    conn.commit()
+    conn.close()
+
+    response = RedirectResponse("/dashboard", status_code=303)
+    if current_username == teknisi["username"]:
+        response.set_cookie("technician_username", updated_username, httponly=True, samesite="lax")
+    return response
+
+
+@app.post("/teknisi/{username}/delete")
+def hapus_teknisi(request: Request, username: str):
+    role, current_username = get_current_user(request)
+    if role != "superuser":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    teknisi = conn.execute(
+        "SELECT * FROM profil_teknisi WHERE lower(username) = lower(?)",
+        (username.strip(),),
+    ).fetchone()
+    if not teknisi or teknisi["username"] == current_username:
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
+    conn.execute(
+        "UPDATE pelanggan SET teknisi_username = NULL WHERE teknisi_username = ?",
+        (teknisi["username"],),
+    )
+    conn.execute("DELETE FROM profil_teknisi WHERE id = ?", (teknisi["id"],))
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/dashboard", status_code=303)
+
+
+@app.post("/pelanggan/{nama_pelanggan}/delete")
+def hapus_pelanggan(request: Request, nama_pelanggan: str):
+    role, _ = get_current_user(request)
+    if role != "superuser":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    pelanggan = conn.execute(
+        "SELECT * FROM pelanggan WHERE lower(nama) = lower(?)",
+        (nama_pelanggan.strip(),),
+    ).fetchone()
+    if pelanggan:
+        unit_rows = conn.execute(
+            "SELECT id FROM unit_servis WHERE lower(nama_pelanggan) = lower(?)",
+            (nama_pelanggan.strip(),),
+        ).fetchall()
+        for unit_row in unit_rows:
+            conn.execute("DELETE FROM history_servis WHERE unit_id = ?", (unit_row["id"],))
+        if unit_rows:
+            unit_ids = [row["id"] for row in unit_rows]
+            placeholders = ", ".join("?" for _ in unit_ids)
+            conn.execute(f"DELETE FROM unit_servis WHERE id IN ({placeholders})", unit_ids)
+        conn.execute("DELETE FROM pelanggan WHERE id = ?", (pelanggan["id"],))
     conn.commit()
     conn.close()
     return RedirectResponse("/dashboard", status_code=303)
