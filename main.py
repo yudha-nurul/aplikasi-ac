@@ -139,7 +139,8 @@ def init_db():
                 nama TEXT NOT NULL UNIQUE,
                 username TEXT,
                 password_hash TEXT,
-                alamat TEXT
+                alamat TEXT,
+                no_hp TEXT
             )
         """)
         cursor.execute("""
@@ -174,6 +175,7 @@ def init_db():
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS username TEXT")
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS password_hash TEXT")
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS alamat TEXT")
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS no_hp TEXT")
         cursor.execute("ALTER TABLE unit_servis ADD COLUMN IF NOT EXISTS foto_perangkat TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_before TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_after TEXT")
@@ -206,8 +208,9 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             nama TEXT NOT NULL COLLATE NOCASE UNIQUE,
             username TEXT,
-            password_hash TEXT
-            ,alamat TEXT
+            password_hash TEXT,
+            alamat TEXT,
+            no_hp TEXT
         )
     """)
     customer_columns = {row[1] for row in cursor.execute("PRAGMA table_info(pelanggan)").fetchall()}
@@ -217,6 +220,8 @@ def init_db():
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN password_hash TEXT")
     if "alamat" not in customer_columns:
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN alamat TEXT")
+    if "no_hp" not in customer_columns:
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN no_hp TEXT")
     unit_columns = {row[1] for row in cursor.execute("PRAGMA table_info(unit_servis)").fetchall()}
     if "foto_perangkat" not in unit_columns:
         cursor.execute("ALTER TABLE unit_servis ADD COLUMN foto_perangkat TEXT")
@@ -410,6 +415,7 @@ def tambah_pelanggan(
     username: str = Form(...),
     password: str = Form(...),
     alamat: str = Form(""),
+    no_hp: str = Form(""),
 ):
     if get_session_role(request) != "teknisi":
         return RedirectResponse("/login/teknisi", status_code=303)
@@ -418,11 +424,14 @@ def tambah_pelanggan(
     if nama:
         conn = get_db_connection()
         conn.execute(
-            "INSERT INTO pelanggan (nama, username, password_hash) VALUES (?, ?, ?) "
+            "INSERT INTO pelanggan (nama, username, password_hash, alamat, no_hp) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT (nama) DO NOTHING",
-            (nama, username.strip(), hash_customer_password(password)),
+            (nama, username.strip(), hash_customer_password(password), alamat.strip(), no_hp.strip()),
         )
-        conn.execute("UPDATE pelanggan SET alamat = ? WHERE nama = ?", (alamat.strip(), nama))
+        conn.execute(
+            "UPDATE pelanggan SET alamat = ?, no_hp = ? WHERE nama = ?",
+            (alamat.strip(), no_hp.strip(), nama),
+        )
         conn.commit()
         conn.close()
     return RedirectResponse("/dashboard", status_code=303)
@@ -455,6 +464,7 @@ def edit_pelanggan(
     username: str = Form(...),
     password: str = Form(""),
     alamat: str = Form(""),
+    no_hp: str = Form(""),
 ):
     if get_session_role(request) != "teknisi":
         return RedirectResponse("/login/teknisi", status_code=303)
@@ -477,8 +487,8 @@ def edit_pelanggan(
     if password.strip():
         password_hash = hash_customer_password(password)
     conn.execute(
-        "UPDATE pelanggan SET nama = ?, username = ?, password_hash = ?, alamat = ? WHERE id = ?",
-        (nama, username, password_hash, alamat.strip(), pelanggan["id"]),
+        "UPDATE pelanggan SET nama = ?, username = ?, password_hash = ?, alamat = ?, no_hp = ? WHERE id = ?",
+        (nama, username, password_hash, alamat.strip(), no_hp.strip(), pelanggan["id"]),
     )
     conn.execute(
         "UPDATE unit_servis SET nama_pelanggan = ? WHERE lower(nama_pelanggan) = lower(?)",

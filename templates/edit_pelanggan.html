@@ -24,6 +24,10 @@
                     <input id="username" name="username" value="{{ pelanggan.username or '' }}" required autocomplete="username" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
                 </div>
                 <div>
+                    <label for="no_hp" class="block text-sm font-semibold text-slate-700 mb-2">No. HP</label>
+                    <input id="no_hp" name="no_hp" type="tel" value="{{ pelanggan.no_hp or '' }}" placeholder="Contoh: 081234567890" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+                </div>
+                <div>
                     <label for="password" class="block text-sm font-semibold text-slate-700 mb-2">Password Baru</label>
                     <input id="password" name="password" type="password" autocomplete="new-password" placeholder="Kosongkan jika tidak ingin mengubah password" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
                     <p class="text-xs text-slate-500 mt-2">Password lama tetap digunakan jika kolom ini dikosongkan.</p>
