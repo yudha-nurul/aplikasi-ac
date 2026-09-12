@@ -612,6 +612,59 @@ def halaman_edit_pelanggan(request: Request, nama_pelanggan: str):
         context={"pelanggan": pelanggan, "role": role, "daftar_teknisi": daftar_teknisi},
     )
 
+
+@app.get("/pelanggan/{nama_pelanggan}/detail")
+def halaman_detail_pelanggan(request: Request, nama_pelanggan: str):
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    pelanggan = conn.execute(
+        "SELECT * FROM pelanggan WHERE lower(nama) = lower(?)",
+        (nama_pelanggan,),
+    ).fetchone()
+    if not pelanggan:
+        conn.close()
+        return templates.TemplateResponse(
+            request=request,
+            name="aksi.html",
+            context={"judul": "Pelanggan Tidak Ditemukan", "pesan": "Data pelanggan tidak terdaftar.", "dashboard_url": "/dashboard"},
+            status_code=404,
+        )
+
+    if role == "teknisi" and pelanggan["teknisi_username"] not in (None, current_username):
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
+    daftar_unit = conn.execute(
+        "SELECT * FROM unit_servis WHERE lower(nama_pelanggan) = lower(?) ORDER BY id DESC",
+        (nama_pelanggan,),
+    ).fetchall()
+    history = conn.execute(
+        """
+        SELECT h.*, u.kode_unik, u.unit
+        FROM history_servis h
+        JOIN unit_servis u ON u.id = h.unit_id
+        WHERE lower(u.nama_pelanggan) = lower(?)
+        ORDER BY h.id DESC
+        """,
+        (nama_pelanggan,),
+    ).fetchall()
+    conn.close()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="detail_pelanggan.html",
+        context={
+            "pelanggan": pelanggan,
+            "daftar_unit": daftar_unit,
+            "history": history,
+            "role": role,
+            "dashboard_url": "/dashboard",
+        },
+    )
+
 @app.post("/pelanggan/{nama_pelanggan}/edit")
 def edit_pelanggan(
     request: Request,

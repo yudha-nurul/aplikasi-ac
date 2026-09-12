@@ -83,7 +83,10 @@
                                 {% if teknisi_item.pelanggan %}
                                 <ul class="mt-2 space-y-1 text-sm text-slate-700">
                                     {% for pelanggan_item in teknisi_item.pelanggan %}
-                                    <li>- {{ pelanggan_item.nama }}</li>
+                                    <li class="flex items-center justify-between gap-2">
+                                        <span>- {{ pelanggan_item.nama }}</span>
+                                        <a href="/pelanggan/{{ pelanggan_item.nama|urlencode }}/detail" class="rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-semibold text-blue-600 hover:border-blue-200">Detail</a>
+                                    </li>
                                     {% endfor %}
                                 </ul>
                                 {% else %}
