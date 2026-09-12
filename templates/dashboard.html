@@ -44,8 +44,8 @@
 
             <div class="space-y-3">
                 {% for teknisi_item in daftar_teknisi %}
-                <div class="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <details class="group rounded-2xl border border-slate-200 bg-slate-50">
+                    <summary class="flex cursor-pointer list-none flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
                         <div>
                             <div class="flex items-center gap-3">
                                 <p class="font-semibold text-slate-800">{{ teknisi_item.username }}</p>
@@ -58,7 +58,13 @@
                             <p class="mt-1 text-sm text-slate-500">No. HP: {{ teknisi_item.no_hp or 'Belum diisi' }}</p>
                             <p class="mt-1 text-xs text-slate-500">Role: {{ teknisi_item.role or 'teknisi' }}</p>
                         </div>
+
                         <div class="flex flex-wrap items-center gap-2">
+                            <div class="flex items-center gap-2 text-[11px] font-semibold text-slate-600">
+                                <span class="rounded-full bg-white px-2.5 py-1">Pelanggan: {{ teknisi_item.pelanggan|length }}</span>
+                                <span class="rounded-full bg-white px-2.5 py-1">History: {{ teknisi_item.history_count }}</span>
+                            </div>
+                            <span class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-blue-600 group-open:text-blue-700">Lihat detail pelanggan</span>
                             <a href="/teknisi/{{ teknisi_item.username }}/edit" class="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:border-blue-200 hover:text-blue-600">Edit / Reset Password</a>
                             {% if teknisi_item.username != teknisi.username %}
                             <form method="post" action="/teknisi/{{ teknisi_item.username }}/toggle-status">
@@ -68,44 +74,45 @@
                             </form>
                             {% endif %}
                         </div>
-                    </div>
+                    </summary>
 
-                    <div class="mt-4 grid gap-4 md:grid-cols-2">
-                        <div class="rounded-xl border border-slate-200 bg-white p-3">
-                            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Pelanggan yang dimiliki</p>
-                            {% if teknisi_item.pelanggan %}
-                            <ul class="mt-2 space-y-1 text-sm text-slate-700">
-                                {% for pelanggan_item in teknisi_item.pelanggan %}
-                                <li>- {{ pelanggan_item.nama }}</li>
-                                {% endfor %}
-                            </ul>
-                            {% else %}
-                            <p class="mt-2 text-sm text-slate-500">Belum ada pelanggan yang ditugaskan.</p>
-                            {% endif %}
-                        </div>
+                    <div class="border-t border-slate-200 bg-white p-4">
+                        <div class="grid gap-4 md:grid-cols-2">
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <p class="text-xs font-bold uppercase tracking-wide text-slate-500">Pelanggan yang dimiliki</p>
+                                {% if teknisi_item.pelanggan %}
+                                <ul class="mt-2 space-y-1 text-sm text-slate-700">
+                                    {% for pelanggan_item in teknisi_item.pelanggan %}
+                                    <li>- {{ pelanggan_item.nama }}</li>
+                                    {% endfor %}
+                                </ul>
+                                {% else %}
+                                <p class="mt-2 text-sm text-slate-500">Belum ada pelanggan yang ditugaskan.</p>
+                                {% endif %}
+                            </div>
 
-                        <div class="rounded-xl border border-slate-200 bg-white p-3">
-                            <p class="text-xs font-bold uppercase tracking-wide text-slate-500">History servis</p>
-                            <p class="mt-2 text-xl font-bold text-slate-800">{{ teknisi_item.history_count }}</p>
-                            {% if teknisi_item.history %}
-                            <ul class="mt-2 space-y-2 text-xs text-slate-600">
-                                {% for history_item in teknisi_item.history[:5] %}
-                                <li class="rounded-lg bg-slate-50 p-2">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="font-semibold text-slate-700">{{ history_item.nama_pelanggan }}</span>
-                                        <span class="text-[10px] uppercase tracking-wide text-slate-500">{{ history_item.tanggal }}</span>
-                                    </div>
-                                    <p class="mt-1">{{ history_item.item_servis }}</p>
-                                    <p class="mt-1 text-[10px] text-slate-500">{{ history_item.kode_unik }} • {{ history_item.unit }}</p>
-                                </li>
-                                {% endfor %}
-                            </ul>
-                            {% else %}
-                            <p class="mt-2 text-sm text-slate-500">Belum ada history servis.</p>
-                            {% endif %}
+                            <div class="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                <p class="text-xs font-bold uppercase tracking-wide text-slate-500">History servis</p>
+                                {% if teknisi_item.history %}
+                                <ul class="mt-2 space-y-2 text-xs text-slate-600">
+                                    {% for history_item in teknisi_item.history[:5] %}
+                                    <li class="rounded-lg bg-white p-2">
+                                        <div class="flex items-center justify-between gap-2">
+                                            <span class="font-semibold text-slate-700">{{ history_item.nama_pelanggan }}</span>
+                                            <span class="text-[10px] uppercase tracking-wide text-slate-500">{{ history_item.tanggal }}</span>
+                                        </div>
+                                        <p class="mt-1">{{ history_item.item_servis }}</p>
+                                        <p class="mt-1 text-[10px] text-slate-500">{{ history_item.kode_unik }} • {{ history_item.unit }}</p>
+                                    </li>
+                                    {% endfor %}
+                                </ul>
+                                {% else %}
+                                <p class="mt-2 text-sm text-slate-500">Belum ada history servis.</p>
+                                {% endif %}
+                            </div>
                         </div>
                     </div>
-                </div>
+                </details>
                 {% else %}
                 <p class="text-sm text-slate-500">Belum ada teknisi terdaftar.</p>
                 {% endfor %}
