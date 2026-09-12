@@ -394,7 +394,34 @@ def halaman_dashboard(request: Request):
     ).fetchone()
     if role == "superuser":
         daftar_pelanggan = conn.execute("SELECT * FROM pelanggan ORDER BY lower(nama)").fetchall()
-        daftar_teknisi = conn.execute("SELECT * FROM profil_teknisi ORDER BY username").fetchall()
+        daftar_teknisi_raw = conn.execute("SELECT * FROM profil_teknisi ORDER BY username").fetchall()
+        daftar_teknisi = []
+        for teknisi_item in daftar_teknisi_raw:
+            pelanggan_teknisi = conn.execute(
+                "SELECT * FROM pelanggan WHERE teknisi_username = ? ORDER BY lower(nama)",
+                (teknisi_item["username"],),
+            ).fetchall()
+            history_teknisi = conn.execute(
+                """
+                SELECT h.*, u.nama_pelanggan, u.unit, u.kode_unik
+                FROM history_servis h
+                JOIN unit_servis u ON u.id = h.unit_id
+                WHERE lower(h.nama_teknisi) = lower(?)
+                ORDER BY h.id DESC
+                """,
+                (teknisi_item["username"],),
+            ).fetchall()
+            daftar_teknisi.append(
+                {
+                    "username": teknisi_item["username"],
+                    "no_hp": teknisi_item["no_hp"],
+                    "role": teknisi_item["role"],
+                    "is_active": teknisi_item["is_active"],
+                    "pelanggan": pelanggan_teknisi,
+                    "history_count": len(history_teknisi),
+                    "history": history_teknisi,
+                }
+            )
     else:
         daftar_pelanggan = conn.execute(
             "SELECT * FROM pelanggan WHERE teknisi_username = ? ORDER BY lower(nama)",
