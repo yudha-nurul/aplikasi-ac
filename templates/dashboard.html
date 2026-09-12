@@ -32,6 +32,20 @@
             </div>
         </header>
 
+        <form method="get" action="/dashboard" class="rounded-[2rem] bg-white/95 p-4 shadow-2xl shadow-cyan-950/20 ring-1 ring-white/20">
+            <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div class="flex-1">
+                    <label for="search" class="mb-2 block text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Pencarian</label>
+                    <input id="search" name="q" value="{{ search_query or '' }}" placeholder="Cari pelanggan atau teknisi" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+                </div>
+                {% if role == 'superuser' %}
+                <div class="flex items-center gap-2 md:pt-7">
+                    <a href="/dashboard/export-teknisi{% if search_query %}?q={{ search_query }}{% endif %}" class="rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-emerald-700">Export Laporan Teknisi</a>
+                </div>
+                {% endif %}
+            </div>
+        </form>
+
         {% if role == 'superuser' %}
         <section class="rounded-[2rem] bg-white/95 p-6 shadow-2xl shadow-cyan-950/20 ring-1 ring-white/20">
             <div class="mb-4 flex items-center justify-between gap-4">

@@ -1,13 +1,14 @@
 import sqlite3
 import os
 import base64
+import csv
 import hashlib
 import hmac
 import qrcode
 import shutil
 from urllib.parse import quote
 from datetime import date, datetime
-from io import BytesIO
+from io import BytesIO, StringIO
 from typing import List, Optional
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -386,6 +387,8 @@ def halaman_dashboard(request: Request):
     if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
+    search_query = (request.query_params.get("q") or "").strip().lower()
+
     conn = get_db_connection()
     current_username = current_username or TECHNICIAN_USERNAME
     teknisi = conn.execute(
@@ -431,6 +434,32 @@ def halaman_dashboard(request: Request):
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
     conn.close()
 
+    if search_query:
+        if role == "superuser":
+            daftar_pelanggan = [
+                item for item in daftar_pelanggan
+                if search_query in (item["nama"] or "").lower()
+                or search_query in (item["username"] or "").lower()
+                or search_query in (item["no_hp"] or "").lower()
+                or search_query in (item["alamat"] or "").lower()
+            ]
+            daftar_teknisi = [
+                item for item in daftar_teknisi
+                if search_query in (item["username"] or "").lower()
+                or search_query in (item["no_hp"] or "").lower()
+                or search_query in " ".join(
+                    pelanggan_item["nama"] for pelanggan_item in item["pelanggan"]
+                ).lower()
+            ]
+        else:
+            daftar_pelanggan = [
+                item for item in daftar_pelanggan
+                if search_query in (item["nama"] or "").lower()
+                or search_query in (item["username"] or "").lower()
+                or search_query in (item["no_hp"] or "").lower()
+                or search_query in (item["alamat"] or "").lower()
+            ]
+
     unit_per_pelanggan = {}
     for unit in daftar_unit:
         unit_per_pelanggan.setdefault(unit["nama_pelanggan"], []).append(unit)
@@ -450,6 +479,7 @@ def halaman_dashboard(request: Request):
             "teknisi": teknisi,
             "daftar_teknisi": daftar_teknisi,
             "role": role,
+            "search_query": search_query,
         }
     )
 
@@ -465,6 +495,70 @@ def simpan_profil_teknisi(request: Request, no_hp: str = Form("")):
     conn.commit()
     conn.close()
     return RedirectResponse("/dashboard", status_code=303)
+
+@app.get("/dashboard/export-teknisi")
+def export_laporan_teknisi(request: Request):
+    role, _ = get_current_user(request)
+    if role != "superuser":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    teknisi_rows = conn.execute("SELECT * FROM profil_teknisi ORDER BY username").fetchall()
+    rows = []
+    for teknisi_item in teknisi_rows:
+        pelanggan_teknisi = conn.execute(
+            "SELECT * FROM pelanggan WHERE teknisi_username = ? ORDER BY lower(nama)",
+            (teknisi_item["username"],),
+        ).fetchall()
+        history_teknisi = conn.execute(
+            """
+            SELECT h.*, u.nama_pelanggan, u.unit, u.kode_unik
+            FROM history_servis h
+            JOIN unit_servis u ON u.id = h.unit_id
+            WHERE lower(h.nama_teknisi) = lower(?)
+            ORDER BY h.id DESC
+            """,
+            (teknisi_item["username"],),
+        ).fetchall()
+        rows.append(
+            {
+                "username": teknisi_item["username"],
+                "role": teknisi_item["role"],
+                "is_active": "Aktif" if teknisi_item["is_active"] in (1, True, "1") else "Nonaktif",
+                "no_hp": teknisi_item["no_hp"] or "-",
+                "jumlah_pelanggan": len(pelanggan_teknisi),
+                "jumlah_history": len(history_teknisi),
+                "pelanggan": ", ".join(item["nama"] for item in pelanggan_teknisi) if pelanggan_teknisi else "-",
+                "history": "; ".join(
+                    f"{item['tanggal']} | {item['nama_pelanggan']} | {item['item_servis']} | {item['kode_unik']}"
+                    for item in history_teknisi
+                ) if history_teknisi else "-",
+            }
+        )
+    conn.close()
+
+    buffer = StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["Username", "Role", "Status", "No. HP", "Jumlah Pelanggan", "Jumlah History", "Daftar Pelanggan", "Daftar History Servis"])
+    for row in rows:
+        writer.writerow([
+            row["username"],
+            row["role"],
+            row["is_active"],
+            row["no_hp"],
+            row["jumlah_pelanggan"],
+            row["jumlah_history"],
+            row["pelanggan"],
+            row["history"],
+        ])
+
+    csv_content = buffer.getvalue()
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=laporan_teknisi.csv"},
+    )
+
 
 @app.get("/dashboard/customer")
 def halaman_dashboard_customer(request: Request):
