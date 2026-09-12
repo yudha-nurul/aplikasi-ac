@@ -111,7 +111,7 @@ def hash_customer_password(password: str) -> str:
 
 def get_dashboard_url(request: Request) -> str:
     role = get_session_role(request)
-    if role == "teknisi":
+    if role in {"teknisi", "superuser"}:
         return "/dashboard"
     if role == "customer":
         return "/dashboard/customer"
@@ -140,14 +140,17 @@ def init_db():
                 username TEXT,
                 password_hash TEXT,
                 alamat TEXT,
-                no_hp TEXT
+                no_hp TEXT,
+                teknisi_username TEXT
             )
         """)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS profil_teknisi (
                 id SERIAL PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
-                no_hp TEXT
+                no_hp TEXT,
+                password_hash TEXT,
+                role TEXT DEFAULT 'teknisi'
             )
         """)
         cursor.execute("""
@@ -176,12 +179,19 @@ def init_db():
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS password_hash TEXT")
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS alamat TEXT")
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS no_hp TEXT")
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN IF NOT EXISTS teknisi_username TEXT")
         cursor.execute("ALTER TABLE unit_servis ADD COLUMN IF NOT EXISTS foto_perangkat TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_before TEXT")
         cursor.execute("ALTER TABLE history_servis ADD COLUMN IF NOT EXISTS foto_after TEXT")
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN IF NOT EXISTS password_hash TEXT")
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'teknisi'")
         cursor.execute(
-            "INSERT INTO profil_teknisi (username) VALUES (?) ON CONFLICT (username) DO NOTHING",
-            (TECHNICIAN_USERNAME,),
+            "INSERT INTO profil_teknisi (username, password_hash, role) VALUES (?, ?, ?) ON CONFLICT (username) DO NOTHING",
+            (TECHNICIAN_USERNAME, hash_customer_password(TECHNICIAN_PASSWORD or ""), "superuser"),
+        )
+        cursor.execute(
+            "UPDATE profil_teknisi SET password_hash = ?, role = 'superuser' WHERE username = ?",
+            (hash_customer_password(TECHNICIAN_PASSWORD or ""), TECHNICIAN_USERNAME),
         )
         cursor.execute(
             "INSERT INTO pelanggan (nama) SELECT DISTINCT nama_pelanggan FROM unit_servis WHERE 1=1 "
@@ -220,6 +230,8 @@ def init_db():
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN password_hash TEXT")
     if "alamat" not in customer_columns:
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN alamat TEXT")
+    if "teknisi_username" not in customer_columns:
+        cursor.execute("ALTER TABLE pelanggan ADD COLUMN teknisi_username TEXT")
     if "no_hp" not in customer_columns:
         cursor.execute("ALTER TABLE pelanggan ADD COLUMN no_hp TEXT")
     unit_columns = {row[1] for row in cursor.execute("PRAGMA table_info(unit_servis)").fetchall()}
@@ -229,12 +241,18 @@ def init_db():
         CREATE TABLE IF NOT EXISTS profil_teknisi (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
-            no_hp TEXT
+            no_hp TEXT,
+            password_hash TEXT,
+            role TEXT DEFAULT 'teknisi'
         )
     """)
     cursor.execute(
-        "INSERT INTO profil_teknisi (username) VALUES (?) ON CONFLICT (username) DO NOTHING",
-        (TECHNICIAN_USERNAME,),
+        "INSERT INTO profil_teknisi (username, password_hash, role) VALUES (?, ?, ?) ON CONFLICT (username) DO NOTHING",
+        (TECHNICIAN_USERNAME, hash_customer_password(TECHNICIAN_PASSWORD or ""), "superuser"),
+    )
+    cursor.execute(
+        "UPDATE profil_teknisi SET password_hash = ?, role = 'superuser' WHERE username = ?",
+        (hash_customer_password(TECHNICIAN_PASSWORD or ""), TECHNICIAN_USERNAME),
     )
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS history_servis (
@@ -316,6 +334,33 @@ def normalize_phone(phone: Optional[str]) -> str:
         return "62" + digits[1:]
     return digits
 
+
+def get_current_user(request: Request):
+    role = get_session_role(request)
+    if role in {"teknisi", "superuser"}:
+        return role, request.cookies.get("technician_username", TECHNICIAN_USERNAME)
+    if role == "customer":
+        return role, request.cookies.get("customer_username", "")
+    return role, None
+
+
+def can_access_unit(conn, unit, role: str, username: Optional[str]) -> bool:
+    if role == "superuser":
+        return True
+    if role != "teknisi":
+        return False
+    if not unit or not username:
+        return False
+    customer = conn.execute(
+        "SELECT teknisi_username FROM pelanggan WHERE lower(nama) = lower(?)",
+        (unit["nama_pelanggan"],),
+    ).fetchone()
+    if not customer:
+        return username == TECHNICIAN_USERNAME
+    if customer["teknisi_username"] in (None, ""):
+        return username == TECHNICIAN_USERNAME
+    return customer["teknisi_username"] == username
+
 # -------------------------------------------------------------
 # 🌐 ENDPOINTS APLIKASI
 # -------------------------------------------------------------
@@ -334,15 +379,25 @@ def health_check():
 
 @app.get("/dashboard")
 def halaman_dashboard(request: Request):
-    if get_session_role(request) != "teknisi":
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
+    current_username = current_username or TECHNICIAN_USERNAME
     teknisi = conn.execute(
         "SELECT * FROM profil_teknisi WHERE username = ?",
-        (TECHNICIAN_USERNAME,),
+        (current_username,),
     ).fetchone()
-    daftar_pelanggan = conn.execute("SELECT * FROM pelanggan ORDER BY lower(nama)").fetchall()
+    if role == "superuser":
+        daftar_pelanggan = conn.execute("SELECT * FROM pelanggan ORDER BY lower(nama)").fetchall()
+        daftar_teknisi = conn.execute("SELECT * FROM profil_teknisi ORDER BY username").fetchall()
+    else:
+        daftar_pelanggan = conn.execute(
+            "SELECT * FROM pelanggan WHERE teknisi_username = ? ORDER BY lower(nama)",
+            (current_username,),
+        ).fetchall()
+        daftar_teknisi = []
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
     conn.close()
 
@@ -363,6 +418,8 @@ def halaman_dashboard(request: Request):
             "pelanggan": pelanggan,
             "jumlah_pelanggan": len(pelanggan),
             "teknisi": teknisi,
+            "daftar_teknisi": daftar_teknisi,
+            "role": role,
         }
     )
 
@@ -402,11 +459,67 @@ def halaman_dashboard_customer(request: Request):
         context={"nama_pelanggan": nama_pelanggan, "daftar_unit": daftar_unit},
     )
 
+@app.get("/tambah-teknisi")
+def halaman_tambah_teknisi(request: Request):
+    role, _ = get_current_user(request)
+    if role != "superuser":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="tambah_teknisi.html",
+        context={"judul": "Tambah Teknisi", "error": None},
+    )
+
+
+@app.post("/tambah-teknisi")
+def tambah_teknisi(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    no_hp: str = Form(""),
+):
+    role, _ = get_current_user(request)
+    if role != "superuser":
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    username = username.strip()
+    if not username or not password:
+        return templates.TemplateResponse(
+            request=request,
+            name="tambah_teknisi.html",
+            context={"judul": "Tambah Teknisi", "error": "Username dan password wajib diisi."},
+            status_code=400,
+        )
+
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO profil_teknisi (username, password_hash, role, no_hp) VALUES (?, ?, 'teknisi', ?) "
+        "ON CONFLICT(username) DO UPDATE SET password_hash = excluded.password_hash, role = 'teknisi', no_hp = excluded.no_hp",
+        (username, hash_customer_password(password), no_hp.strip()),
+    )
+    conn.commit()
+    conn.close()
+    return RedirectResponse("/dashboard", status_code=303)
+
+
 @app.get("/tambah-pelanggan")
 def halaman_tambah_pelanggan(request: Request):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
-    return templates.TemplateResponse(request=request, name="tambah_pelanggan.html")
+
+    conn = get_db_connection()
+    daftar_teknisi = []
+    if role == "superuser":
+        daftar_teknisi = conn.execute("SELECT username, no_hp FROM profil_teknisi WHERE role != 'customer' ORDER BY username").fetchall()
+    conn.close()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="tambah_pelanggan.html",
+        context={"role": role, "daftar_teknisi": daftar_teknisi},
+    )
 
 @app.post("/tambah-pelanggan")
 def tambah_pelanggan(
@@ -416,21 +529,26 @@ def tambah_pelanggan(
     password: str = Form(...),
     alamat: str = Form(""),
     no_hp: str = Form(""),
+    teknisi_username: str = Form(""),
 ):
-    if get_session_role(request) != "teknisi":
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     nama = nama.strip()
     if nama:
         conn = get_db_connection()
+        assigned_technician = current_username or TECHNICIAN_USERNAME
+        if role == "superuser":
+            assigned_technician = teknisi_username.strip() or assigned_technician
         conn.execute(
-            "INSERT INTO pelanggan (nama, username, password_hash, alamat, no_hp) VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO pelanggan (nama, username, password_hash, alamat, no_hp, teknisi_username) VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (nama) DO NOTHING",
-            (nama, username.strip(), hash_customer_password(password), alamat.strip(), no_hp.strip()),
+            (nama, username.strip(), hash_customer_password(password), alamat.strip(), no_hp.strip(), assigned_technician),
         )
         conn.execute(
-            "UPDATE pelanggan SET alamat = ?, no_hp = ? WHERE nama = ?",
-            (alamat.strip(), no_hp.strip(), nama),
+            "UPDATE pelanggan SET alamat = ?, no_hp = ?, teknisi_username = ? WHERE nama = ?",
+            (alamat.strip(), no_hp.strip(), assigned_technician, nama),
         )
         conn.commit()
         conn.close()
@@ -438,7 +556,8 @@ def tambah_pelanggan(
 
 @app.get("/pelanggan/{nama_pelanggan}/edit")
 def halaman_edit_pelanggan(request: Request, nama_pelanggan: str):
-    if get_session_role(request) != "teknisi":
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
@@ -446,6 +565,9 @@ def halaman_edit_pelanggan(request: Request, nama_pelanggan: str):
         "SELECT * FROM pelanggan WHERE lower(nama) = lower(?)",
         (nama_pelanggan,),
     ).fetchone()
+    daftar_teknisi = []
+    if role == "superuser":
+        daftar_teknisi = conn.execute("SELECT username, no_hp FROM profil_teknisi WHERE role != 'customer' ORDER BY username").fetchall()
     conn.close()
     if not pelanggan:
         return templates.TemplateResponse(
@@ -454,7 +576,11 @@ def halaman_edit_pelanggan(request: Request, nama_pelanggan: str):
             context={"judul": "Pelanggan Tidak Ditemukan", "pesan": "Data pelanggan tidak terdaftar.", "dashboard_url": "/dashboard"},
             status_code=404,
         )
-    return templates.TemplateResponse(request=request, name="edit_pelanggan.html", context={"pelanggan": pelanggan})
+    return templates.TemplateResponse(
+        request=request,
+        name="edit_pelanggan.html",
+        context={"pelanggan": pelanggan, "role": role, "daftar_teknisi": daftar_teknisi},
+    )
 
 @app.post("/pelanggan/{nama_pelanggan}/edit")
 def edit_pelanggan(
@@ -465,8 +591,10 @@ def edit_pelanggan(
     password: str = Form(""),
     alamat: str = Form(""),
     no_hp: str = Form(""),
+    teknisi_username: str = Form(""),
 ):
-    if get_session_role(request) != "teknisi":
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     nama = nama.strip()
@@ -483,12 +611,17 @@ def edit_pelanggan(
         conn.close()
         return RedirectResponse("/dashboard", status_code=303)
 
+    if role == "teknisi" and pelanggan["teknisi_username"] not in (None, current_username):
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
     password_hash = pelanggan["password_hash"]
     if password.strip():
         password_hash = hash_customer_password(password)
+    assigned = current_username if role == "teknisi" else (teknisi_username.strip() or pelanggan["teknisi_username"] or TECHNICIAN_USERNAME)
     conn.execute(
-        "UPDATE pelanggan SET nama = ?, username = ?, password_hash = ?, alamat = ?, no_hp = ? WHERE id = ?",
-        (nama, username, password_hash, alamat.strip(), no_hp.strip(), pelanggan["id"]),
+        "UPDATE pelanggan SET nama = ?, username = ?, password_hash = ?, alamat = ?, no_hp = ?, teknisi_username = ? WHERE id = ?",
+        (nama, username, password_hash, alamat.strip(), no_hp.strip(), assigned, pelanggan["id"]),
     )
     conn.execute(
         "UPDATE unit_servis SET nama_pelanggan = ? WHERE lower(nama_pelanggan) = lower(?)",
@@ -500,7 +633,8 @@ def edit_pelanggan(
 
 @app.get("/pelanggan/{nama_pelanggan}/tambah-perangkat")
 def halaman_tambah_perangkat(request: Request, nama_pelanggan: str):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
     return templates.TemplateResponse(
         request=request,
@@ -517,7 +651,8 @@ def tambah_perangkat(
     kategori_lainnya: str = Form(""),
     foto_perangkat: UploadFile = File(None),
 ):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     mode = kategori_lainnya.strip() if mode == "Other" else mode.strip()
@@ -720,20 +855,31 @@ def halaman_login_teknisi(request: Request):
 
 @app.post("/login/teknisi")
 def login_teknisi(request: Request, username: str = Form(...), password: str = Form(...)):
-    if TECHNICIAN_PASSWORD is None:
-        error = "TECHNICIAN_PASSWORD belum diatur di environment aplikasi."
-    elif hmac.compare_digest(username, TECHNICIAN_USERNAME) and hmac.compare_digest(password, TECHNICIAN_PASSWORD):
+    conn = get_db_connection()
+    teknisi = conn.execute(
+        "SELECT username, password_hash, role FROM profil_teknisi WHERE lower(username) = lower(?)",
+        (username.strip(),),
+    ).fetchone()
+    conn.close()
+
+    if teknisi and teknisi["password_hash"] and hmac.compare_digest(
+        teknisi["password_hash"], hash_customer_password(password)
+    ):
         response = RedirectResponse("/dashboard", status_code=303)
-        response.set_cookie("ac_session", create_session("teknisi"), httponly=True, samesite="lax")
+        response.set_cookie("ac_session", create_session(teknisi["role"] or "teknisi"), httponly=True, samesite="lax")
+        response.set_cookie("technician_username", teknisi["username"], httponly=True, samesite="lax")
+        return response
+
+    if TECHNICIAN_PASSWORD is not None and hmac.compare_digest(username, TECHNICIAN_USERNAME) and hmac.compare_digest(password, TECHNICIAN_PASSWORD):
+        response = RedirectResponse("/dashboard", status_code=303)
+        response.set_cookie("ac_session", create_session("superuser"), httponly=True, samesite="lax")
         response.set_cookie("technician_username", username, httponly=True, samesite="lax")
         return response
-    else:
-        error = "Username atau password salah."
 
     return templates.TemplateResponse(
         request=request,
         name="login.html",
-        context={"judul": "Login Teknisi", "role": "teknisi", "error": error},
+        context={"judul": "Login Teknisi", "role": "teknisi", "error": "Username atau password salah."},
         status_code=401
     )
 
@@ -884,7 +1030,8 @@ def tambah_foto_perangkat(
 
 @app.get("/unit/{kode_unik}/tambah-history")
 def halaman_tambah_history(request: Request, kode_unik: str):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
@@ -921,7 +1068,8 @@ def tambah_history(
     foto_before: List[UploadFile] = File(None),
     foto_after: List[UploadFile] = File(None),
 ):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
@@ -973,7 +1121,8 @@ def tambah_history(
 
 @app.get("/unit/{kode_unik}/history/{history_id}/edit")
 def halaman_edit_history(request: Request, kode_unik: str, history_id: int):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
@@ -1021,7 +1170,8 @@ def edit_history(
     foto_before: List[UploadFile] = File(None),
     foto_after: List[UploadFile] = File(None),
 ):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()

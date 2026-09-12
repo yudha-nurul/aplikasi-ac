@@ -31,6 +31,16 @@
                     <label for="password" class="block text-sm font-semibold text-slate-700 mb-2">Password Customer</label>
                     <input id="password" name="password" type="password" required autocomplete="new-password" placeholder="Password login customer" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
                 </div>
+                {% if role == 'superuser' %}
+                <div>
+                    <label for="teknisi_username" class="block text-sm font-semibold text-slate-700 mb-2">Penugasan ke Teknisi</label>
+                    <select id="teknisi_username" name="teknisi_username" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10">
+                        {% for teknisi in daftar_teknisi %}
+                        <option value="{{ teknisi.username }}">{{ teknisi.username }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                {% endif %}
                 <div>
                     <label for="alamat" class="block text-sm font-semibold text-slate-700 mb-2">Alamat Pelanggan</label>
                     <textarea id="alamat" name="alamat" required rows="3" placeholder="Alamat lokasi perangkat" class="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-blue-500 focus:bg-white focus:ring-4 focus:ring-blue-500/10"></textarea>
