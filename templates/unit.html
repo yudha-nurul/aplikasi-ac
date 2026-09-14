@@ -34,8 +34,8 @@
                 <div class="min-w-[120px] flex-1 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                     <p class="text-[10px] uppercase tracking-wide text-slate-500">Foto Perangkat</p>
                     {% if unit.foto_perangkat %}
-                    <a href="{{ image_url(unit.foto_perangkat) }}" target="_blank" rel="noopener" class="mt-2 block overflow-hidden rounded-xl border border-slate-200 bg-white p-1">
-                        <img src="{{ image_url(unit.foto_perangkat) }}" alt="Foto perangkat {{ unit.unit }}" class="h-20 w-full rounded-lg object-cover">
+                    <a href="{{ image_url(unit.foto_perangkat) }}" onclick="event.preventDefault(); openPhoto('{{ image_url(unit.foto_perangkat) }}', 'Foto Perangkat {{ unit.unit }}');" target="_blank" rel="noopener" class="mt-2 block overflow-hidden rounded-xl border border-slate-200 bg-white p-1 cursor-pointer">
+                        <img src="{{ image_url(unit.foto_perangkat) }}" alt="Foto perangkat {{ unit.unit }}" class="h-20 w-full rounded-lg object-cover hover:opacity-90 transition">
                     </a>
                     {% else %}
                     <div class="mt-2 flex h-20 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white p-2 text-center text-[11px] text-slate-500">
@@ -98,8 +98,8 @@
                         <tr class="align-top">
                             <td class="px-3 py-4 whitespace-nowrap text-slate-600">{{ item.tanggal }}</td>
                             <td class="px-3 py-4 font-medium text-slate-800"><ul class="list-disc list-inside space-y-1">{% for service_item in item.item_servis.split('\n') %}<li>{{ service_item }}</li>{% endfor %}</ul></td>
-                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_before }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('before', []) %}<a href="{{ image_url(foto) }}" target="_blank"><img src="{{ image_url(foto) }}" alt="Foto before" class="w-16 h-16 object-cover rounded-lg border border-slate-200"></a>{% endfor %}</div></td>
-                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_after }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('after', []) %}<a href="{{ image_url(foto) }}" target="_blank"><img src="{{ image_url(foto) }}" alt="Foto after" class="w-16 h-16 object-cover rounded-lg border border-slate-200"></a>{% endfor %}</div></td>
+                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_before }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('before', []) %}<a href="{{ image_url(foto) }}" onclick="event.preventDefault(); openPhoto('{{ image_url(foto) }}', 'Foto Before - {{ item.tanggal }}');" target="_blank" class="cursor-pointer"><img src="{{ image_url(foto) }}" alt="Foto before" class="w-16 h-16 object-cover rounded-lg border border-slate-200 hover:opacity-90 transition"></a>{% endfor %}</div></td>
+                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_after }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('after', []) %}<a href="{{ image_url(foto) }}" onclick="event.preventDefault(); openPhoto('{{ image_url(foto) }}', 'Foto After - {{ item.tanggal }}');" target="_blank" class="cursor-pointer"><img src="{{ image_url(foto) }}" alt="Foto after" class="w-16 h-16 object-cover rounded-lg border border-slate-200 hover:opacity-90 transition"></a>{% endfor %}</div></td>
                             <td class="px-3 py-4 text-slate-600">{{ item.nama_teknisi }}</td>
                             <td class="px-3 py-4 text-slate-600">{{ item.servis_selanjutnya }}</td>
                             {% if is_teknisi %}<td class="px-3 py-4"><a href="/unit/{{ unit.kode_unik }}/history/{{ item.id }}/edit" class="inline-flex items-center rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</a></td>{% endif %}
@@ -115,5 +115,84 @@
 
         <a href="{{ dashboard_url|default('/') }}" class="block text-center text-sm text-blue-600 hover:underline">Kembali ke dashboard</a>
     </main>
+
+    <!-- Modal Fullscreen Lightbox untuk Foto -->
+    <div id="photoModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/90 backdrop-blur-sm p-3 sm:p-6 transition-opacity duration-200" role="dialog" aria-modal="true" aria-label="Lihat Foto Fullscreen">
+        <!-- Tombol Kontrol di Kanan Atas -->
+        <div class="fixed top-3 right-3 sm:top-5 sm:right-6 z-50 flex items-center gap-2">
+            <a id="modalNewTabBtn" href="#" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 rounded-full bg-white/20 px-3 py-1.5 text-xs font-medium text-white shadow-lg backdrop-blur-md transition hover:bg-white/30" title="Buka gambar di tab baru">
+                <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                <span class="hidden sm:inline">Buka Tab Baru</span>
+            </a>
+            <button id="modalCloseBtn" type="button" class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-white/25 text-white shadow-lg backdrop-blur-md transition hover:bg-white/40 focus:outline-none" title="Tutup (Kembali ke List)">
+                <svg class="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+
+        <!-- Gambar Fullscreen dan Keterangan -->
+        <div class="relative flex flex-col items-center justify-center max-h-full max-w-full">
+            <img id="modalImg" src="" alt="Foto Fullscreen" class="max-h-[82vh] max-w-[95vw] rounded-xl object-contain shadow-2xl transition-transform select-none">
+            <p id="modalCaption" class="mt-3 text-center text-xs sm:text-sm font-medium text-white/90 drop-shadow"></p>
+        </div>
+    </div>
+
+    <script>
+        const photoModal = document.getElementById('photoModal');
+        const modalImg = document.getElementById('modalImg');
+        const modalCaption = document.getElementById('modalCaption');
+        const modalNewTabBtn = document.getElementById('modalNewTabBtn');
+        const modalCloseBtn = document.getElementById('modalCloseBtn');
+
+        function openPhoto(url, caption = '') {
+            if (!url) return;
+            modalImg.src = url;
+            modalCaption.textContent = caption;
+            modalNewTabBtn.href = url;
+            photoModal.classList.remove('hidden');
+            photoModal.classList.add('flex');
+            document.body.style.overflow = 'hidden';
+
+            // Push state ke browser history agar tombol 'Back' bawaan smartphone hanya menutup modal
+            if (window.history && window.history.pushState) {
+                window.history.pushState({ photoModalOpen: true }, '');
+            }
+        }
+
+        function closePhoto(fromPopstate = false) {
+            if (photoModal.classList.contains('hidden')) return;
+            photoModal.classList.add('hidden');
+            photoModal.classList.remove('flex');
+            modalImg.src = '';
+            document.body.style.overflow = '';
+
+            // Jika ditutup lewat tombol X atau klik background (bukan dari popstate), bersihkan history state
+            if (!fromPopstate && window.history.state && window.history.state.photoModalOpen) {
+                window.history.back();
+            }
+        }
+
+        modalCloseBtn.addEventListener('click', () => closePhoto(false));
+
+        // Tutup jika user mengklik area gelap di luar gambar
+        photoModal.addEventListener('click', (e) => {
+            if (e.target === photoModal || e.target.id === 'photoModal') {
+                closePhoto(false);
+            }
+        });
+
+        // Tutup jika user menekan tombol Escape di keyboard (PC)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closePhoto(false);
+        });
+
+        // Tangani tombol Back fisik/gestur di HP Android/iOS
+        window.addEventListener('popstate', () => {
+            closePhoto(true);
+        });
+    </script>
 </body>
 </html>
