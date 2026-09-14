@@ -34,8 +34,8 @@
                 <div class="min-w-[120px] flex-1 rounded-2xl border border-slate-200 bg-slate-50 p-3">
                     <p class="text-[10px] uppercase tracking-wide text-slate-500">Foto Perangkat</p>
                     {% if unit.foto_perangkat %}
-                    <a href="/uploads/{{ unit.foto_perangkat }}" target="_blank" rel="noopener" class="mt-2 block overflow-hidden rounded-xl border border-slate-200 bg-white p-1">
-                        <img src="/uploads/{{ unit.foto_perangkat }}" alt="Foto perangkat {{ unit.unit }}" class="h-20 w-full rounded-lg object-cover">
+                    <a href="{{ image_url(unit.foto_perangkat) }}" target="_blank" rel="noopener" class="mt-2 block overflow-hidden rounded-xl border border-slate-200 bg-white p-1">
+                        <img src="{{ image_url(unit.foto_perangkat) }}" alt="Foto perangkat {{ unit.unit }}" class="h-20 w-full rounded-lg object-cover">
                     </a>
                     {% else %}
                     <div class="mt-2 flex h-20 items-center justify-center rounded-xl border border-dashed border-slate-300 bg-white p-2 text-center text-[11px] text-slate-500">
@@ -98,8 +98,8 @@
                         <tr class="align-top">
                             <td class="px-3 py-4 whitespace-nowrap text-slate-600">{{ item.tanggal }}</td>
                             <td class="px-3 py-4 font-medium text-slate-800"><ul class="list-disc list-inside space-y-1">{% for service_item in item.item_servis.split('\n') %}<li>{{ service_item }}</li>{% endfor %}</ul></td>
-                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_before }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('before', []) %}<a href="/uploads/{{ foto }}" target="_blank"><img src="/uploads/{{ foto }}" alt="Foto before" class="w-16 h-16 object-cover rounded-lg border border-slate-200"></a>{% endfor %}</div></td>
-                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_after }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('after', []) %}<a href="/uploads/{{ foto }}" target="_blank"><img src="/uploads/{{ foto }}" alt="Foto after" class="w-16 h-16 object-cover rounded-lg border border-slate-200"></a>{% endfor %}</div></td>
+                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_before }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('before', []) %}<a href="{{ image_url(foto) }}" target="_blank"><img src="{{ image_url(foto) }}" alt="Foto before" class="w-16 h-16 object-cover rounded-lg border border-slate-200"></a>{% endfor %}</div></td>
+                            <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_after }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('after', []) %}<a href="{{ image_url(foto) }}" target="_blank"><img src="{{ image_url(foto) }}" alt="Foto after" class="w-16 h-16 object-cover rounded-lg border border-slate-200"></a>{% endfor %}</div></td>
                             <td class="px-3 py-4 text-slate-600">{{ item.nama_teknisi }}</td>
                             <td class="px-3 py-4 text-slate-600">{{ item.servis_selanjutnya }}</td>
                             {% if is_teknisi %}<td class="px-3 py-4"><a href="/unit/{{ unit.kode_unik }}/history/{{ item.id }}/edit" class="inline-flex items-center rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</a></td>{% endif %}

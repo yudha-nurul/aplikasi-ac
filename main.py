@@ -5,6 +5,8 @@ import hashlib
 import hmac
 import qrcode
 import shutil
+import urllib.request
+import urllib.error
 from urllib.parse import quote
 from datetime import date, datetime
 from io import BytesIO
@@ -16,6 +18,17 @@ from fastapi.templating import Jinja2Templates
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+def image_url(path: Optional[str]) -> str:
+    if not path:
+        return ""
+    if path.startswith("http://") or path.startswith("https://"):
+        return path
+    return f"/uploads/{path}"
+
+templates.env.globals["image_url"] = image_url
+templates.env.filters["image_url"] = image_url
+
 RUNTIME_DIR = os.path.dirname(__file__)
 UPLOAD_DIR = os.path.join(RUNTIME_DIR, "uploads")
 STATIC_DIR = os.path.join(RUNTIME_DIR, "static")
@@ -44,6 +57,11 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "ganti-secret-aplikasi-ac")
 TECHNICIAN_USERNAME = os.getenv("TECHNICIAN_USERNAME", "teknisi")
 TECHNICIAN_PASSWORD = os.getenv("TECHNICIAN_PASSWORD")
+
+SUPABASE_URL_RAW = os.getenv("SUPABASE_URL") or os.getenv("API_URL", "")
+SUPABASE_URL = SUPABASE_URL_RAW.split("/rest/v1")[0].rstrip("/") if SUPABASE_URL_RAW else ""
+SUPABASE_KEY = os.getenv("SUPABASE_KEY") or os.getenv("API_Key") or os.getenv("API_KEY", "")
+SUPABASE_BUCKET = os.getenv("SUPABASE_BUCKET", "foto-aplikasi-ac")
 
 class PostgresCursor:
     def __init__(self, cursor):
@@ -255,6 +273,12 @@ def init_db():
     profil_columns = {row[1] for row in cursor.execute("PRAGMA table_info(profil_teknisi)").fetchall()}
     if "nama" not in profil_columns:
         cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN nama TEXT")
+    if "password_hash" not in profil_columns:
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN password_hash TEXT")
+    if "role" not in profil_columns:
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN role TEXT DEFAULT 'teknisi'")
+    if "is_active" not in profil_columns:
+        cursor.execute("ALTER TABLE profil_teknisi ADD COLUMN is_active INTEGER DEFAULT 1")
     cursor.execute(
         "INSERT INTO profil_teknisi (username, nama, password_hash, role) VALUES (?, ?, ?, ?) ON CONFLICT (username) DO NOTHING",
         (TECHNICIAN_USERNAME, TECHNICIAN_USERNAME, hash_customer_password(TECHNICIAN_PASSWORD or ""), "superuser"),
@@ -303,6 +327,35 @@ def init_db():
 
 init_db()
 
+MIME_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+}
+
+def upload_to_supabase_storage(file_bytes: bytes, filename: str, content_type: str) -> Optional[str]:
+    if not (SUPABASE_URL and SUPABASE_KEY and SUPABASE_BUCKET):
+        return None
+    try:
+        url = f"{SUPABASE_URL}/storage/v1/object/{SUPABASE_BUCKET}/{filename}"
+        req = urllib.request.Request(
+            url,
+            data=file_bytes,
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Content-Type": content_type,
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as res:
+            if res.status in (200, 201):
+                return f"{SUPABASE_URL}/storage/v1/object/public/{SUPABASE_BUCKET}/{filename}"
+    except Exception as err:
+        print(f"[Supabase Storage Error] {err}")
+    return None
+
 def simpan_foto(upload: Optional[UploadFile], prefix: str) -> Optional[str]:
     if not upload or not upload.filename:
         return None
@@ -310,8 +363,21 @@ def simpan_foto(upload: Optional[UploadFile], prefix: str) -> Optional[str]:
     if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
         return None
     filename = f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}{extension}"
-    with open(os.path.join(UPLOAD_DIR, filename), "wb") as output:
-        shutil.copyfileobj(upload.file, output)
+
+    file_bytes = upload.file.read()
+    upload.file.seek(0)
+
+    try:
+        with open(os.path.join(UPLOAD_DIR, filename), "wb") as output:
+            output.write(file_bytes)
+    except Exception as e:
+        print(f"[Local Save Error] {e}")
+
+    content_type = MIME_TYPES.get(extension, "application/octet-stream")
+    public_url = upload_to_supabase_storage(file_bytes, filename, content_type)
+    if public_url:
+        return public_url
+
     return filename
 
 def simpan_banyak_foto(uploads: Optional[List[UploadFile]], prefix: str) -> List[str]:
