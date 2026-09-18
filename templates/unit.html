@@ -102,7 +102,18 @@
                             <td class="px-3 py-4 text-slate-600"><p>{{ item.kondisi_after }}</p><div class="flex flex-wrap gap-2 mt-2">{% for foto in foto_history.get(item.id, {}).get('after', []) %}<a href="{{ image_url(foto) }}" onclick="event.preventDefault(); openPhoto('{{ image_url(foto) }}', 'Foto After - {{ item.tanggal }}');" target="_blank" class="cursor-pointer"><img src="{{ image_url(foto) }}" alt="Foto after" class="w-16 h-16 object-cover rounded-lg border border-slate-200 hover:opacity-90 transition"></a>{% endfor %}</div></td>
                             <td class="px-3 py-4 text-slate-600">{{ item.nama_teknisi }}</td>
                             <td class="px-3 py-4 text-slate-600">{{ item.servis_selanjutnya }}</td>
-                            {% if is_teknisi %}<td class="px-3 py-4"><a href="/unit/{{ unit.kode_unik }}/history/{{ item.id }}/edit" class="inline-flex items-center rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</a></td>{% endif %}
+                            {% if is_teknisi %}
+                            <td class="px-3 py-4">
+                                {% if is_superuser or item.nama_teknisi == current_username %}
+                                <div class="flex items-center gap-2">
+                                    <a href="/unit/{{ unit.kode_unik }}/history/{{ item.id }}/edit" class="inline-flex items-center rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Edit</a>
+                                    <form method="post" action="/unit/{{ unit.kode_unik }}/history/{{ item.id }}/delete" onsubmit="return confirm('Hapus history ini?');">
+                                        <button type="submit" class="inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-100">Hapus</button>
+                                    </form>
+                                </div>
+                                {% endif %}
+                            </td>
+                            {% endif %}
                         </tr>
                         {% endfor %}
                     </tbody>

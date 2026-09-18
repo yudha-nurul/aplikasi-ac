@@ -436,6 +436,15 @@ def can_access_unit(conn, unit, role: str, username: Optional[str]) -> bool:
         return username == TECHNICIAN_USERNAME
     return customer["teknisi_username"] == username
 
+
+def can_manage_history(record, role: str, username: Optional[str]) -> bool:
+    if role == "superuser":
+        return True
+    if role != "teknisi" or not username:
+        return False
+    created_by = record["nama_teknisi"] if record and "nama_teknisi" in record.keys() else ""
+    return (created_by or "").strip().lower() == username.strip().lower()
+
 # -------------------------------------------------------------
 # 🌐 ENDPOINTS APLIKASI
 # -------------------------------------------------------------
@@ -1330,7 +1339,7 @@ def lihat_unit(request: Request, kode_unik: str):
         "Request servis: "
     )
     request_url = f"https://wa.me/{teknisi_phone}?text={quote(request_text)}" if teknisi_phone else None
-    role = get_session_role(request)
+    role, current_username = get_current_user(request)
     return templates.TemplateResponse(
         request=request,
         name="unit.html",
@@ -1338,8 +1347,10 @@ def lihat_unit(request: Request, kode_unik: str):
             "unit": unit,
             "history": history,
             "foto_history": foto_history,
-            "is_teknisi": role == "teknisi",
-            "is_logged_in": role in {"teknisi", "customer"},
+            "is_teknisi": role in {"teknisi", "superuser"},
+            "is_superuser": role == "superuser",
+            "is_logged_in": role in {"teknisi", "customer", "superuser"},
+            "current_username": current_username,
             "reminder": reminder_text(history[0]["servis_selanjutnya"] if history else None),
             "dashboard_url": get_dashboard_url(request),
             "request_url": request_url,
@@ -1476,7 +1487,7 @@ def tambah_history(
 
 @app.get("/unit/{kode_unik}/history/{history_id}/edit")
 def halaman_edit_history(request: Request, kode_unik: str, history_id: int):
-    role, _ = get_current_user(request)
+    role, current_username = get_current_user(request)
     if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
@@ -1497,6 +1508,9 @@ def halaman_edit_history(request: Request, kode_unik: str, history_id: int):
             context={"judul": "History Tidak Ditemukan", "pesan": "Catatan history tidak terdaftar.", "dashboard_url": get_dashboard_url(request)},
             status_code=404,
         )
+    if not can_manage_history(record, role, current_username):
+        conn.close()
+        return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
     photos = conn.execute(
         "SELECT jenis, nama_file FROM history_foto WHERE history_id = ? ORDER BY id",
         (history_id,),
@@ -1525,7 +1539,7 @@ def edit_history(
     foto_before: List[UploadFile] = File(None),
     foto_after: List[UploadFile] = File(None),
 ):
-    role, _ = get_current_user(request)
+    role, current_username = get_current_user(request)
     if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
@@ -1534,7 +1548,7 @@ def edit_history(
         "SELECT h.* FROM history_servis h JOIN unit_servis u ON u.id = h.unit_id WHERE u.kode_unik = ? AND h.id = ?",
         (kode_unik, history_id),
     ).fetchone()
-    if not record:
+    if not record or not can_manage_history(record, role, current_username):
         conn.close()
         return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
 
@@ -1559,6 +1573,27 @@ def edit_history(
         [(history_id, "before", filename) for filename in before_filenames]
         + [(history_id, "after", filename) for filename in after_filenames],
     )
+    conn.commit()
+    conn.close()
+    return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+@app.post("/unit/{kode_unik}/history/{history_id}/delete")
+def hapus_history(request: Request, kode_unik: str, history_id: int):
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
+        return RedirectResponse("/login/teknisi", status_code=303)
+
+    conn = get_db_connection()
+    record = conn.execute(
+        "SELECT h.* FROM history_servis h JOIN unit_servis u ON u.id = h.unit_id WHERE u.kode_unik = ? AND h.id = ?",
+        (kode_unik, history_id),
+    ).fetchone()
+    if not record or not can_manage_history(record, role, current_username):
+        conn.close()
+        return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
+
+    conn.execute("DELETE FROM history_foto WHERE history_id = ?", (history_id,))
+    conn.execute("DELETE FROM history_servis WHERE id = ?", (history_id,))
     conn.commit()
     conn.close()
     return RedirectResponse(f"/unit/{kode_unik}", status_code=303)
