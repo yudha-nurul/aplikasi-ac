@@ -12,7 +12,7 @@ from datetime import date, datetime
 from io import BytesIO
 from typing import List, Optional
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -53,10 +53,50 @@ def load_local_env():
             os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
 
 load_local_env()
+
+# Deteksi apakah aplikasi berjalan di lingkungan produksi (mis. Render).
+IS_PRODUCTION = bool(
+    os.getenv("RENDER")
+    or os.getenv("RENDER_SERVICE_ID")
+    or os.getenv("PRODUCTION")
+    or os.getenv("ENV", "").lower() == "production"
+)
+
 DATABASE_URL = os.getenv("DATABASE_URL")
-SESSION_SECRET = os.getenv("SESSION_SECRET", "ganti-secret-aplikasi-ac")
-TECHNICIAN_USERNAME = os.getenv("TECHNICIAN_USERNAME", "teknisi")
-TECHNICIAN_PASSWORD = os.getenv("TECHNICIAN_PASSWORD")
+
+# Di production SESSION_SECRET WAJIB diisi agar tidak memakai secret default
+# yang bisa dipalsukan. Aplikasi sengaja gagal start bila kosong di production.
+SESSION_SECRET = os.getenv("SESSION_SECRET")
+if not SESSION_SECRET:
+    if IS_PRODUCTION:
+        raise RuntimeError(
+            "SESSION_SECRET wajib diisi di environment produksi. "
+            "Set variabel ini sebelum menjalankan aplikasi."
+        )
+    SESSION_SECRET = "ganti-secret-aplikasi-ac-dev"
+    print("[WARN] SESSION_SECRET belum diisi, memakai secret default khusus development.")
+
+if IS_PRODUCTION and len(SESSION_SECRET) < 32:
+    raise RuntimeError(
+        "SESSION_SECRET terlalu pendek (minimal 32 karakter) untuk production."
+    )
+
+TECHNICIAN_USERNAME = os.getenv("TECHNICIAN_USERNAME", "teknisi").strip() or "teknisi"
+TECHNICIAN_PASSWORD = (os.getenv("TECHNICIAN_PASSWORD") or "").strip()
+
+# Di production, password default teknisi WAJIB diisi dan tidak boleh lemah.
+if IS_PRODUCTION:
+    if not TECHNICIAN_PASSWORD:
+        raise RuntimeError(
+            "TECHNICIAN_PASSWORD wajib diisi di production. "
+            "Jangan biarkan akun superuser tanpa password."
+        )
+    if len(TECHNICIAN_PASSWORD) < 8:
+        raise RuntimeError(
+            "TECHNICIAN_PASSWORD terlalu pendek (minimal 8 karakter) untuk production."
+        )
+elif not TECHNICIAN_PASSWORD:
+    print("[WARN] TECHNICIAN_PASSWORD belum diisi. Login superuser via env var dinonaktifkan.")
 
 SUPABASE_URL_RAW = os.getenv("SUPABASE_URL") or os.getenv("API_URL", "")
 SUPABASE_URL = SUPABASE_URL_RAW.split("/rest/v1")[0].rstrip("/") if SUPABASE_URL_RAW else ""
@@ -108,24 +148,90 @@ def get_db_connection():
     conn.row_factory = sqlite3.Row
     return conn
 
-def create_session(role: str) -> str:
-    payload = base64.urlsafe_b64encode(role.encode()).decode().rstrip("=")
+def create_session(role: str, username: str = "") -> str:
+    payload = base64.urlsafe_b64encode(f"{role}:{username}".encode()).decode().rstrip("=")
     signature = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     return f"{payload}.{signature}"
 
-def get_session_role(request: Request):
+def get_session(request: Request):
+    """Kembalikan tuple (role, username) dari cookie sesi yang tertandatangani."""
     session = request.cookies.get("ac_session", "")
     try:
         payload, signature = session.split(".", 1)
         expected = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
-            return None
-        return base64.urlsafe_b64decode(payload + "==").decode()
+            return None, None
+        decoded = base64.urlsafe_b64decode(payload + "==").decode()
+        role, _, username = decoded.partition(":")
+        return role, username
     except (ValueError, UnicodeDecodeError):
-        return None
+        return None, None
 
-def hash_customer_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+def get_session_role(request: Request):
+    role, _ = get_session(request)
+    return role
+
+# --------------------------------------------------------------------------
+# Proteksi CSRF
+# --------------------------------------------------------------------------
+def csrf_token(request: Request) -> str:
+    """Token CSRF yang terikat pada cookie sesi saat ini."""
+    session = request.cookies.get("ac_session", "")
+    return hmac.new(SESSION_SECRET.encode(), f"csrf:{session}".encode(), hashlib.sha256).hexdigest()
+
+def verify_csrf(request: Request, token: Optional[str]) -> bool:
+    return bool(token) and hmac.compare_digest(token, csrf_token(request))
+
+templates.env.globals["csrf_token"] = csrf_token
+
+@app.middleware("http")
+async def csrf_protection_middleware(request: Request, call_next):
+    if request.method == "POST":
+        token = request.headers.get("x-csrf-token") or ""
+        if not token:
+            try:
+                form = await request.form()
+                token = form.get("csrf_token") or ""
+            except Exception:
+                token = ""
+        if not verify_csrf(request, token):
+            return PlainTextResponse(
+                "Permintaan ditolak: CSRF token tidak valid atau kedaluwarsa.",
+                status_code=403,
+            )
+    return await call_next(request)
+
+# --------------------------------------------------------------------------
+# Hashing password (PBKDF2-HMAC-SHA256) dengan dukungan hash lama (SHA-256)
+# --------------------------------------------------------------------------
+PBKDF2_ITERATIONS = 200_000
+PBKDF2_PREFIX = "pbkdf2_sha256"
+
+def hash_password(password: str) -> str:
+    """Buat hash password PBKDF2 dengan salt acak (aman & lambat)."""
+    salt = os.urandom(16)
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, PBKDF2_ITERATIONS)
+    return f"{PBKDF2_PREFIX}${PBKDF2_ITERATIONS}${salt.hex()}${derived.hex()}"
+
+def verify_password(stored: Optional[str], password: str) -> bool:
+    """Verifikasi password terhadap hash PBKDF2 baru maupun hash SHA-256 lama."""
+    if not stored:
+        return False
+    if stored.startswith(f"{PBKDF2_PREFIX}$"):
+        try:
+            _, iterations, salt_hex, hash_hex = stored.split("$")
+            derived = hashlib.pbkdf2_hmac(
+                "sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(iterations)
+            )
+            return hmac.compare_digest(derived.hex(), hash_hex)
+        except (ValueError, TypeError):
+            return False
+    # Kompatibilitas ke belakang: hash SHA-256 tanpa salt (akan di-upgrade saat login).
+    legacy = hashlib.sha256(password.encode("utf-8")).hexdigest()
+    return hmac.compare_digest(stored, legacy)
+
+# Nama lama tetap dipakai di beberapa tempat; arahkan ke implementasi baru.
+hash_customer_password = hash_password
 
 def get_dashboard_url(request: Request) -> str:
     role = get_session_role(request)
@@ -334,6 +440,21 @@ MIME_TYPES = {
     ".webp": "image/webp",
 }
 
+# Batas ukuran file upload (5 MB) dan daftar MIME yang diizinkan
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024  # 5 MB
+ALLOWED_MIME = {"image/jpeg", "image/png", "image/webp"}
+ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
+
+def _detect_mime_from_bytes(data: bytes) -> Optional[str]:
+    """Deteksi MIME type dari magic bytes, bukan hanya dari ekstensi filename."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"RIFF") and len(data) >= 12 and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
 def upload_to_supabase_storage(file_bytes: bytes, filename: str, content_type: str) -> Optional[str]:
     if not (SUPABASE_URL and SUPABASE_KEY and SUPABASE_BUCKET):
         return None
@@ -360,12 +481,24 @@ def simpan_foto(upload: Optional[UploadFile], prefix: str) -> Optional[str]:
     if not upload or not upload.filename:
         return None
     extension = os.path.splitext(upload.filename)[1].lower()
-    if extension not in {".jpg", ".jpeg", ".png", ".webp"}:
+    if extension not in ALLOWED_EXTENSIONS:
+        print(f"[Upload Rejected] Ekstensi tidak diizinkan: {extension}")
         return None
-    filename = f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}{extension}"
 
-    file_bytes = upload.file.read()
-    upload.file.seek(0)
+    # Baca maksimal MAX_UPLOAD_BYTES + 1 byte untuk deteksi overflow
+    file_bytes = upload.file.read(MAX_UPLOAD_BYTES + 1)
+    if len(file_bytes) > MAX_UPLOAD_BYTES:
+        print(f"[Upload Rejected] File melebihi {MAX_UPLOAD_BYTES} bytes")
+        return None
+    if not file_bytes:
+        return None
+
+    detected_mime = _detect_mime_from_bytes(file_bytes)
+    if detected_mime not in ALLOWED_MIME:
+        print(f"[Upload Rejected] Konten bukan gambar valid: {upload.filename}")
+        return None
+
+    filename = f"{prefix}-{datetime.now().strftime('%Y%m%d%H%M%S%f')}{extension}"
 
     try:
         with open(os.path.join(UPLOAD_DIR, filename), "wb") as output:
@@ -373,7 +506,7 @@ def simpan_foto(upload: Optional[UploadFile], prefix: str) -> Optional[str]:
     except Exception as e:
         print(f"[Local Save Error] {e}")
 
-    content_type = MIME_TYPES.get(extension, "application/octet-stream")
+    content_type = MIME_TYPES.get(extension, detected_mime or "application/octet-stream")
     public_url = upload_to_supabase_storage(file_bytes, filename, content_type)
     if public_url:
         return public_url
@@ -409,15 +542,23 @@ def normalize_phone(phone: Optional[str]) -> str:
         return "62" + digits[1:]
     return digits
 
-
 def get_current_user(request: Request):
-    role = get_session_role(request)
+    role, username = get_session(request)
     if role in {"teknisi", "superuser"}:
-        return role, request.cookies.get("technician_username", TECHNICIAN_USERNAME)
+        return role, (username or TECHNICIAN_USERNAME)
     if role == "customer":
-        return role, request.cookies.get("customer_username", "")
+        return role, (username or None)
     return role, None
 
+def set_session_cookies(response, role: str, username: str):
+    """Simpan sesi (role + username) dalam satu cookie yang tertandatangani."""
+    response.set_cookie(
+        "ac_session",
+        create_session(role, username),
+        httponly=True,
+        samesite="lax",
+        secure=IS_PRODUCTION,
+    )
 
 def can_access_unit(conn, unit, role: str, username: Optional[str]) -> bool:
     if role == "superuser":
@@ -435,7 +576,6 @@ def can_access_unit(conn, unit, role: str, username: Optional[str]) -> bool:
     if customer["teknisi_username"] in (None, ""):
         return username == TECHNICIAN_USERNAME
     return customer["teknisi_username"] == username
-
 
 def can_manage_history(record, role: str, username: Optional[str]) -> bool:
     if role == "superuser":
@@ -578,10 +718,10 @@ def simpan_profil_teknisi(request: Request, no_hp: str = Form("")):
 
 @app.get("/dashboard/customer")
 def halaman_dashboard_customer(request: Request):
-    if get_session_role(request) != "customer":
+    role, customer_username = get_current_user(request)
+    if role != "customer":
         return RedirectResponse("/login/customer", status_code=303)
 
-    customer_username = request.cookies.get("customer_username", "")
     conn = get_db_connection()
     customer = conn.execute(
         "SELECT nama FROM pelanggan WHERE username = ?",
@@ -610,7 +750,6 @@ def halaman_tambah_teknisi(request: Request):
         name="tambah_teknisi.html",
         context={"judul": "Tambah Teknisi", "error": None},
     )
-
 
 @app.post("/tambah-teknisi")
 def tambah_teknisi(
@@ -643,7 +782,6 @@ def tambah_teknisi(
     conn.commit()
     conn.close()
     return RedirectResponse("/dashboard", status_code=303)
-
 
 @app.get("/tambah-pelanggan")
 def halaman_tambah_pelanggan(request: Request):
@@ -723,7 +861,6 @@ def halaman_edit_pelanggan(request: Request, nama_pelanggan: str):
         name="edit_pelanggan.html",
         context={"pelanggan": pelanggan, "role": role, "daftar_teknisi": daftar_teknisi},
     )
-
 
 @app.get("/pelanggan/{nama_pelanggan}/detail")
 def halaman_detail_pelanggan(request: Request, nama_pelanggan: str):
@@ -891,11 +1028,12 @@ def tambah_unit(
     mode: str = Form(...),
     nama_unit: str = Form(...)
 ):
-    if get_session_role(request) != "teknisi":
+    role, _ = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
-    
+
     # 1. Simpan unit dulu untuk mendapatkan ID otomatis
     cursor = conn.cursor()
     cursor.execute(
@@ -903,11 +1041,11 @@ def tambah_unit(
         (nama_pelanggan, mode, nama_unit, "Baru Terdaftar")
     )
     unit_id = cursor.fetchone()["id"]
-    
+
     # 2. Buat Kode Unik berdasarkan ID (Contoh: AC-001, KLK-002, dll)
     prefix = mode[:3].upper() # AC -> AC, Kulkas -> KUL
     kode_unik = f"{prefix}-{unit_id:03d}" # Contoh: AC-001
-    
+
     # 3. Update kode_unik ke database
     cursor.execute("UPDATE unit_servis SET kode_unik = ? WHERE id = ?", (kode_unik, unit_id))
     cursor.execute(
@@ -919,7 +1057,7 @@ def tambah_unit(
         (unit_id, datetime.now().strftime("%Y-%m-%d"), "Registrasi perangkat", "-", "Belum diservis", "Teknisi", "-"),
     )
     conn.commit()
-    
+
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
     conn.close()
 
@@ -934,25 +1072,25 @@ def tambah_unit(
 def generate_qr(request: Request, kode_unik: str):
     # Buat QR Code berisi teks kode_unik
     img = qrcode.make(str(request.url_for("lihat_unit", kode_unik=kode_unik)))
-    
+
     # Simpan ke memori sementara (RAM) lalu kirim sebagai gambar PNG
     buf = BytesIO()
     img.save(buf, format="PNG")
     buf.seek(0)
-    
+
     return StreamingResponse(buf, media_type="image/png")
 
 @app.get("/print-qr/{kode_unik}")
 def print_qr(request: Request, kode_unik: str):
     role = get_session_role(request)
-    if role not in {"teknisi", "customer"}:
+    if role not in {"teknisi", "customer", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
+    _, username = get_current_user(request)
     conn = get_db_connection()
     unit = conn.execute("SELECT * FROM unit_servis WHERE kode_unik = ?", (kode_unik,)).fetchone()
     if role == "customer":
-        customer_username = request.cookies.get("customer_username", "")
-        customer = conn.execute("SELECT nama FROM pelanggan WHERE username = ?", (customer_username,)).fetchone()
+        customer = conn.execute("SELECT nama FROM pelanggan WHERE username = ?", (username,)).fetchone()
         if not customer or not unit or customer["nama"].lower() != unit["nama_pelanggan"].lower():
             unit = None
     conn.close()
@@ -967,39 +1105,44 @@ def print_qr(request: Request, kode_unik: str):
 
 @app.post("/ubah-status/{unit_id}")
 def ubah_status(request: Request, unit_id: int):
-    if get_session_role(request) != "teknisi":
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
-    unit = conn.execute("SELECT status FROM unit_servis WHERE id = ?", (unit_id,)).fetchone()
-    
-    if unit:
-        status_sekarang = unit["status"]
-        if status_sekarang == "Baru Terdaftar" or status_sekarang == "Perlu Servis":
-            status_baru = "Dalam Proses"
-        elif status_sekarang == "Dalam Proses":
-            status_baru = "Selesai"
-        else:
-            status_baru = "Perlu Servis"
+    unit = conn.execute("SELECT * FROM unit_servis WHERE id = ?", (unit_id,)).fetchone()
 
-        conn.execute("UPDATE unit_servis SET status = ? WHERE id = ?", (status_baru, unit_id))
-        conn.execute(
-            """
-            INSERT INTO history_servis
-            (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                unit_id,
-                datetime.now().strftime("%Y-%m-%d"),
-                "Perubahan status perangkat",
-                status_sekarang,
-                status_baru,
-                "Teknisi",
-                "Sesuai kebutuhan",
-            ),
-        )
-        conn.commit()
+    # Cek ownership: teknisi hanya boleh ubah unit milik pelanggannya
+    if not unit or not can_access_unit(conn, unit, role, current_username):
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
+    status_sekarang = unit["status"]
+    if status_sekarang == "Baru Terdaftar" or status_sekarang == "Perlu Servis":
+        status_baru = "Dalam Proses"
+    elif status_sekarang == "Dalam Proses":
+        status_baru = "Selesai"
+    else:
+        status_baru = "Perlu Servis"
+
+    conn.execute("UPDATE unit_servis SET status = ? WHERE id = ?", (status_baru, unit_id))
+    conn.execute(
+        """
+        INSERT INTO history_servis
+        (unit_id, tanggal, item_servis, kondisi_before, kondisi_after, nama_teknisi, servis_selanjutnya)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            unit_id,
+            datetime.now().strftime("%Y-%m-%d"),
+            "Perubahan status perangkat",
+            status_sekarang,
+            status_baru,
+            current_username or "Teknisi",
+            "Sesuai kebutuhan",
+        ),
+    )
+    conn.commit()
 
     daftar_unit = conn.execute("SELECT * FROM unit_servis ORDER BY id DESC").fetchall()
     conn.close()
@@ -1012,10 +1155,25 @@ def ubah_status(request: Request, unit_id: int):
 
 @app.post("/hapus-unit/{unit_id}")
 def hapus_unit(request: Request, unit_id: int):
-    if get_session_role(request) != "teknisi":
+    role, current_username = get_current_user(request)
+    if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
     conn = get_db_connection()
+    unit = conn.execute("SELECT * FROM unit_servis WHERE id = ?", (unit_id,)).fetchone()
+    if not unit or not can_access_unit(conn, unit, role, current_username):
+        conn.close()
+        return RedirectResponse("/dashboard", status_code=303)
+
+    # Hapus dulu history & foto terkait untuk hindari orphan record
+    history_rows = conn.execute(
+        "SELECT id FROM history_servis WHERE unit_id = ?", (unit_id,)
+    ).fetchall()
+    if history_rows:
+        history_ids = [row["id"] for row in history_rows]
+        placeholders = ", ".join("?" for _ in history_ids)
+        conn.execute(f"DELETE FROM history_foto WHERE history_id IN ({placeholders})", history_ids)
+        conn.execute(f"DELETE FROM history_servis WHERE id IN ({placeholders})", history_ids)
     conn.execute("DELETE FROM unit_servis WHERE id = ?", (unit_id,))
     conn.commit()
 
@@ -1055,20 +1213,29 @@ def login_teknisi(request: Request, username: str = Form(...), password: str = F
         "SELECT username, password_hash, role, is_active FROM profil_teknisi WHERE lower(username) = lower(?)",
         (username.strip(),),
     ).fetchone()
+
+    if teknisi and (teknisi["is_active"] in (None, 1, True, "1")) and verify_password(teknisi["password_hash"], password):
+        # Upgrade transparan hash lama (SHA-256) ke PBKDF2 saat login berhasil.
+        if teknisi["password_hash"] and not teknisi["password_hash"].startswith(f"{PBKDF2_PREFIX}$"):
+            conn.execute(
+                "UPDATE profil_teknisi SET password_hash = ? WHERE username = ?",
+                (hash_password(password), teknisi["username"]),
+            )
+            conn.commit()
+        conn.close()
+        response = RedirectResponse("/dashboard", status_code=303)
+        set_session_cookies(response, teknisi["role"] or "teknisi", teknisi["username"])
+        return response
     conn.close()
 
-    if teknisi and teknisi["password_hash"] and (teknisi["is_active"] in (None, 1, True, "1")) and hmac.compare_digest(
-        teknisi["password_hash"], hash_customer_password(password)
+    # Fallback login superuser via env var — hanya jalan bila TECHNICIAN_PASSWORD diisi.
+    if (
+        TECHNICIAN_PASSWORD
+        and hmac.compare_digest(username.strip(), TECHNICIAN_USERNAME)
+        and hmac.compare_digest(password, TECHNICIAN_PASSWORD)
     ):
         response = RedirectResponse("/dashboard", status_code=303)
-        response.set_cookie("ac_session", create_session(teknisi["role"] or "teknisi"), httponly=True, samesite="lax")
-        response.set_cookie("technician_username", teknisi["username"], httponly=True, samesite="lax")
-        return response
-
-    if TECHNICIAN_PASSWORD is not None and hmac.compare_digest(username, TECHNICIAN_USERNAME) and hmac.compare_digest(password, TECHNICIAN_PASSWORD):
-        response = RedirectResponse("/dashboard", status_code=303)
-        response.set_cookie("ac_session", create_session("superuser"), httponly=True, samesite="lax")
-        response.set_cookie("technician_username", username, httponly=True, samesite="lax")
+        set_session_cookies(response, "superuser", TECHNICIAN_USERNAME)
         return response
 
     return templates.TemplateResponse(
@@ -1104,7 +1271,6 @@ def halaman_edit_teknisi(request: Request, username: str):
         name="edit_teknisi.html",
         context={"teknisi": teknisi, "current_username": current_username},
     )
-
 
 @app.post("/teknisi/{username}/edit")
 def edit_teknisi(
@@ -1156,14 +1322,14 @@ def edit_teknisi(
             "UPDATE pelanggan SET teknisi_username = ? WHERE teknisi_username = ?",
             (updated_username, teknisi["username"]),
         )
-    conn.commit()
+        conn.commit()
     conn.close()
 
     response = RedirectResponse("/dashboard", status_code=303)
     if current_username == teknisi["username"]:
-        response.set_cookie("technician_username", updated_username, httponly=True, samesite="lax")
+        # Perbarui sesi agar username baru langsung dipakai tanpa perlu login ulang.
+        set_session_cookies(response, "superuser", updated_username)
     return response
-
 
 @app.post("/teknisi/{username}/delete")
 def hapus_teknisi(request: Request, username: str):
@@ -1188,7 +1354,6 @@ def hapus_teknisi(request: Request, username: str):
     conn.commit()
     conn.close()
     return RedirectResponse("/dashboard", status_code=303)
-
 
 @app.post("/pelanggan/{nama_pelanggan}/delete")
 def hapus_pelanggan(request: Request, nama_pelanggan: str):
@@ -1216,7 +1381,6 @@ def hapus_pelanggan(request: Request, nama_pelanggan: str):
     conn.commit()
     conn.close()
     return RedirectResponse("/dashboard", status_code=303)
-
 
 @app.post("/teknisi/{username}/toggle-status")
 def toggle_teknisi_status(request: Request, username: str, is_active: str = Form("0")):
@@ -1246,7 +1410,6 @@ def toggle_teknisi_status(request: Request, username: str, is_active: str = Form
     conn.close()
     return RedirectResponse("/dashboard", status_code=303)
 
-
 @app.get("/login/customer")
 def halaman_login_customer(request: Request):
     return templates.TemplateResponse(
@@ -1263,18 +1426,23 @@ def halaman_login_customer(request: Request):
 def login_customer(request: Request, username: str = Form(...), password: str = Form(...)):
     conn = get_db_connection()
     customer = conn.execute(
-        "SELECT nama, username, password_hash FROM pelanggan WHERE username = ?",
+        "SELECT id, nama, username, password_hash FROM pelanggan WHERE username = ?",
         (username.strip(),),
     ).fetchone()
-    conn.close()
 
-    if customer and customer["password_hash"] and hmac.compare_digest(
-        customer["password_hash"], hash_customer_password(password)
-    ):
+    if customer and verify_password(customer["password_hash"], password):
+        # Upgrade transparan hash lama ke PBKDF2.
+        if customer["password_hash"] and not customer["password_hash"].startswith(f"{PBKDF2_PREFIX}$"):
+            conn.execute(
+                "UPDATE pelanggan SET password_hash = ? WHERE id = ?",
+                (hash_password(password), customer["id"]),
+            )
+            conn.commit()
+        conn.close()
         response = RedirectResponse("/dashboard/customer", status_code=303)
-        response.set_cookie("ac_session", create_session("customer"), httponly=True, samesite="lax")
-        response.set_cookie("customer_username", customer["username"], httponly=True, samesite="lax")
+        set_session_cookies(response, "customer", customer["username"])
         return response
+    conn.close()
 
     return templates.TemplateResponse(
         request=request,
@@ -1396,7 +1564,7 @@ def tambah_foto_perangkat(
 
 @app.get("/unit/{kode_unik}/tambah-history")
 def halaman_tambah_history(request: Request, kode_unik: str):
-    role, _ = get_current_user(request)
+    role, current_username = get_current_user(request)
     if role not in {"teknisi", "superuser"}:
         return RedirectResponse("/login/teknisi", status_code=303)
 
@@ -1417,7 +1585,7 @@ def halaman_tambah_history(request: Request, kode_unik: str):
         context={
             "unit": unit,
             "tanggal_sekarang": datetime.now().strftime("%Y-%m-%d"),
-            "nama_teknisi": request.cookies.get("technician_username", TECHNICIAN_USERNAME),
+            "nama_teknisi": current_username or TECHNICIAN_USERNAME,
         },
     )
 
